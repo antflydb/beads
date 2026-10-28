@@ -33,7 +33,8 @@ const memoryConfigKeyPrefix = kvkeys.MemoryConfigKeyPrefix
 // violations (bd-6dnrw.4). All functions take a DBConn, which *sql.Tx,
 // *sql.Conn, and *sql.DB all satisfy.
 //
-// Because callers pin the session, every CALL DOLT_* here goes through
+// Because callers pin the session, every CALL DOLT_* here, and in the
+// StageAndCommit that MergeWithStrategy commits through, goes through
 // schema.DrainCall, which drains the procedure's result sets even when the
 // CALL fails (see its doc comment); plain DML stays on ExecContext (GH#5556).
 
