@@ -448,6 +448,7 @@ var versionExemptions = map[string]string{
 	// Bead guarantee is Phase 3 (#6358). DeleteInTx versions its NEIGHBOURS
 	// through RewriteDeletedReferencesInTx, never the deleted rows.
 	"DeleteIssueInTx":                 "delete family: no surviving row (Phase 3)",
+	"DeleteIssueInTxWithResult":       "delete family: no surviving row (Phase 3)",
 	"DeleteIssuesInTx":                "delete family: no surviving row (Phase 3)",
 	"DeleteResolvedSetInTx":           "delete family: no surviving row (Phase 3)",
 	"DeleteInTx":                      "delete family: no surviving row (Phase 3); neighbours version via RewriteDeletedReferencesInTx",
@@ -534,6 +535,7 @@ var versionNeverMints = map[string]string{
 	"MarkIsBlockedInTx":                "is_blocked is derived state",
 	"MarkIsBlockedInTxWithResult":      "is_blocked is derived state",
 	"DeleteIssueInTx":                  "delete family (Phase 3)",
+	"DeleteIssueInTxWithResult":        "delete family (Phase 3)",
 	"DeleteIssuesInTx":                 "delete family (Phase 3)",
 	"DeleteResolvedSetInTx":            "delete family (Phase 3)",
 	"DeleteIssuesBySourceRepoInTx":     "bulk delete (Phase 3)",

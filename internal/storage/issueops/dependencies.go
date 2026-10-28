@@ -739,10 +739,20 @@ func isAncestorInTx(ctx context.Context, tx DBTX, node, candidate string, depTab
 	return n > 0, nil
 }
 
-func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID string) error {
-	if _, err := tx.ExecContext(ctx,
-		"DELETE FROM dependencies WHERE depends_on_wisp_id = ?", wispID); err != nil {
-		return fmt.Errorf("delete wisp %s from dependencies: %w", wispID, err)
+// DeleteWispFromDependenciesInTx removes every edge of the wisp being deleted
+// and reports whether that removed durable dependencies rows: edges from
+// durable issues that point at the wisp. The wisp_dependencies rows commit
+// with the SQL transaction like the rest of the wisp tables, but those durable
+// rows also need a Dolt commit (GH#6647).
+func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID string) (bool, error) {
+	res, err := tx.ExecContext(ctx,
+		"DELETE FROM dependencies WHERE depends_on_wisp_id = ?", wispID)
+	if err != nil {
+		return false, fmt.Errorf("delete wisp %s from dependencies: %w", wispID, err)
+	}
+	durableRows, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("delete wisp %s from dependencies: rows affected: %w", wispID, err)
 	}
 	// wisp_dependencies is part of the wisp deletion set (DeleteCascadeTables),
 	// but no delete path cleaned it: every wisp deletion orphaned its
@@ -752,25 +762,33 @@ func DeleteWispFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispID stri
 	// DELETEs, not one OR query, so each hits its own index (ff-tqm).
 	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM wisp_dependencies WHERE issue_id = ?", wispID); err != nil {
-		return fmt.Errorf("delete wisp %s child rows from wisp_dependencies: %w", wispID, err)
+		return false, fmt.Errorf("delete wisp %s child rows from wisp_dependencies: %w", wispID, err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM wisp_dependencies WHERE depends_on_wisp_id = ?", wispID); err != nil {
-		return fmt.Errorf("delete wisp %s parent rows from wisp_dependencies: %w", wispID, err)
+		return false, fmt.Errorf("delete wisp %s parent rows from wisp_dependencies: %w", wispID, err)
 	}
-	return nil
+	return durableRows > 0, nil
 }
 
+// DeleteWispsFromDependenciesInTx is DeleteWispFromDependenciesInTx for a
+// batch of wisps.
+//
 //nolint:gosec // G201: inClause contains only ? placeholders
-func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []string) error {
+func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []string) (bool, error) {
 	if len(wispIDs) == 0 {
-		return nil
+		return false, nil
 	}
 	inClause, args := buildSQLInClause(wispIDs)
-	if _, err := tx.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		fmt.Sprintf("DELETE FROM dependencies WHERE depends_on_wisp_id IN (%s)", inClause),
-		args...); err != nil {
-		return fmt.Errorf("delete wisps from dependencies: %w", err)
+		args...)
+	if err != nil {
+		return false, fmt.Errorf("delete wisps from dependencies: %w", err)
+	}
+	durableRows, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("delete wisps from dependencies: rows affected: %w", err)
 	}
 	// See DeleteWispFromDependenciesInTx: wisp_dependencies rows must go with
 	// the wisps, on both the child and parent side. Two targeted DELETEs, not
@@ -778,14 +796,14 @@ func DeleteWispsFromDependenciesInTx(ctx context.Context, tx *sql.Tx, wispIDs []
 	if _, err := tx.ExecContext(ctx,
 		fmt.Sprintf("DELETE FROM wisp_dependencies WHERE issue_id IN (%s)", inClause),
 		args...); err != nil {
-		return fmt.Errorf("delete wisps child rows from wisp_dependencies: %w", err)
+		return false, fmt.Errorf("delete wisps child rows from wisp_dependencies: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		fmt.Sprintf("DELETE FROM wisp_dependencies WHERE depends_on_wisp_id IN (%s)", inClause),
 		args...); err != nil {
-		return fmt.Errorf("delete wisps parent rows from wisp_dependencies: %w", err)
+		return false, fmt.Errorf("delete wisps parent rows from wisp_dependencies: %w", err)
 	}
-	return nil
+	return durableRows > 0, nil
 }
 
 // Dependency target rewrites reinsert matching rows because Dolt can leave the

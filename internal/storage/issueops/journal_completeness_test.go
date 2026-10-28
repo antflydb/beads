@@ -89,6 +89,7 @@ var mutationEntryPoints = []string{
 	"ReopenIssueInTx",
 	// delete, including the role body and the resolved-set worker
 	"DeleteIssueInTx",
+	"DeleteIssueInTxWithResult",
 	"DeleteIssuesInTx",
 	"DeleteResolvedSetInTx",
 	"DeleteIssuesBySourceRepoInTx",

@@ -310,3 +310,35 @@ func TestDoltStoreDependencyEditorNonFlippingAddLeavesPendingIssuesUncommitted(t
 		t.Fatal("issues is clean: the non-flipping add committed a row it never wrote")
 	}
 }
+
+// TestDoltStoreDependencyEditorWispSourceCommitsDurableIsBlocked is GH#6647
+// on the editor's wisp-sourced edges (`bd dep add <wisp> <target>`, `bd dep
+// remove <wisp> <target>`). The edge itself stages nothing, since the wisp
+// plane is dolt-ignored, but it blocks and unblocks the wisp's durable child,
+// and that issues row is committed with it.
+func TestDoltStoreDependencyEditorWispSourceCommitsDurableIsBlocked(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+	ctx, cancel := testContext(t)
+	defer cancel()
+	seedWispParentOfDurableChild(ctx, t, store, "ewbm-w", "ewbm-d", "ewbm-a")
+
+	editor, err := store.DependencyEditor()
+	if err != nil {
+		t.Fatalf("DependencyEditor(): %v", err)
+	}
+	if _, err := editor.AddDependencies(ctx, publicops.AddDependenciesRequest{
+		Actor: "writer",
+		Edges: []publicops.DependencyEdge{{IssueID: "ewbm-w", DependsOnID: "ewbm-a", Type: publicops.DepBlocks}},
+	}); err != nil {
+		t.Fatalf("AddDependencies: %v", err)
+	}
+	requireCommittedIsBlocked(ctx, t, store, "editor wisp dep add", "ewbm-d", true)
+
+	if _, err := editor.RemoveDependency(ctx, publicops.RemoveDependencyRequest{
+		Actor: "writer", IssueID: "ewbm-w", DependsOnID: "ewbm-a",
+	}); err != nil {
+		t.Fatalf("RemoveDependency: %v", err)
+	}
+	requireCommittedIsBlocked(ctx, t, store, "editor wisp dep remove", "ewbm-d", false)
+}
