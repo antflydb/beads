@@ -442,6 +442,7 @@ var versionExemptions = map[string]string{
 	"RecomputeIsBlockedAfterMergeInTx": "is_blocked is derived state",
 	"RecomputeAllIsBlockedInTx":        "is_blocked is derived state",
 	"MarkIsBlockedInTx":                "is_blocked is derived state",
+	"MarkIsBlockedInTxWithResult":      "is_blocked is derived state",
 
 	// the delete family — no surviving row to version; the deleted-Versioned-
 	// Bead guarantee is Phase 3 (#6358). DeleteInTx versions its NEIGHBOURS
@@ -531,6 +532,7 @@ var versionNeverMints = map[string]string{
 	"RecomputeIsBlockedAfterMergeInTx": "is_blocked is derived state",
 	"RecomputeAllIsBlockedInTx":        "is_blocked is derived state",
 	"MarkIsBlockedInTx":                "is_blocked is derived state",
+	"MarkIsBlockedInTxWithResult":      "is_blocked is derived state",
 	"DeleteIssueInTx":                  "delete family (Phase 3)",
 	"DeleteIssuesInTx":                 "delete family (Phase 3)",
 	"DeleteResolvedSetInTx":            "delete family (Phase 3)",

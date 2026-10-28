@@ -34,6 +34,7 @@ var derivedReadinessEmitters = map[string]bool{
 	"recomputeIsBlockedAfterMergeScoped": true,
 	"recomputeIsBlockedForAll":           true,
 	"MarkIsBlockedInTx":                  true,
+	"MarkIsBlockedInTxWithResult":        true,
 	"recordBlockedJournalChanges":        true,
 }
 
@@ -126,6 +127,7 @@ var mutationEntryPoints = []string{
 	"RecomputeIsBlockedForWispIDsInTx",
 	"RecomputeIsBlockedAfterMergeInTx",
 	"MarkIsBlockedInTx",
+	"MarkIsBlockedInTxWithResult",
 	"RecomputeAllIsBlockedInTx",
 	"WakeExpiredDefersInTx",
 	"SweepInTx",
