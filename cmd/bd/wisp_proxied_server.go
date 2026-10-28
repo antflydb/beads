@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/issueops"
 )
 
 func runWispCreateProxiedServer(ctx context.Context, in wispCreateInput) error {
@@ -142,37 +143,24 @@ func runWispGCProxiedServer(ctx context.Context, dryRun bool, ageThreshold time.
 	}
 	r := uowMolReader{uw: uw}
 	abandoned, err := findAbandonedWisps(ctx, r, cleanAll, ageThreshold, excludeTypes)
-	uw.Close(ctx)
 	if err != nil && abandoned == nil {
+		uw.Close(ctx)
 		return HandleError("%v", err)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: cascade expansion incomplete: %v\n", err)
 	}
-
-	if len(abandoned) == 0 {
-		if jsonOutput {
-			return outputJSON(WispGCResult{CleanedIDs: []string{}, CleanedCount: 0, DryRun: dryRun})
-		}
-		fmt.Println("No abandoned wisps found")
-		return nil
+	// Read on the same unit of work as the candidate search, as the decay of
+	// `bd gc` does on this route.
+	retainedSetting, err := uw.ConfigUseCase().GetConfig(ctx, issueops.SettingKeyTypesRetained)
+	uw.Close(ctx)
+	if err != nil {
+		return HandleError("reading %s: %v", issueops.SettingKeyTypesRetained, err)
 	}
+	abandoned, retentionKept := holdBackRetainedTypes(abandoned, retainedSetting)
 
-	if dryRun {
-		if jsonOutput {
-			ids := make([]string, len(abandoned))
-			for i, o := range abandoned {
-				ids[i] = o.ID
-			}
-			return outputJSON(WispGCResult{CleanedIDs: ids, Candidates: len(abandoned), CleanedCount: 0, DryRun: true})
-		}
-		fmt.Printf("Dry run: would clean %d abandoned wisp(s):\n\n", len(abandoned))
-		for _, issue := range abandoned {
-			age := formatTimeAgo(issue.UpdatedAt)
-			fmt.Printf("  %s: %s (last updated: %s)\n", issue.ID, issue.Title, age)
-		}
-		fmt.Printf("\nRun without --dry-run to delete these wisps.\n")
-		return nil
+	if done, err := reportAbandonedWisps(abandoned, retentionKept, dryRun); done {
+		return err
 	}
 
 	ids := make([]string, len(abandoned))
@@ -200,12 +188,15 @@ func runWispGCProxiedServer(ctx context.Context, dryRun bool, ageThreshold time.
 		return HandleError("%v", err)
 	}
 
-	return renderWispGCDeleteResult(ids, res)
+	return renderWispGCDeleteResult(ids, res, retentionKept)
 }
 
-func renderWispGCDeleteResult(ids []string, res domain.DeleteIssuesResult) error {
+// renderWispGCDeleteResult reports a proxied-route wisp GC delete; retentionKept
+// is the count of wisps held back as a retained type, carried in --json as
+// retention_required when non-zero.
+func renderWispGCDeleteResult(ids []string, res domain.DeleteIssuesResult, retentionKept int) error {
 	if jsonOutput {
-		return outputJSON(map[string]interface{}{
+		answer := map[string]interface{}{
 			"deleted":              ids,
 			"deleted_count":        res.DeletedCount,
 			"dependencies_removed": res.DependenciesCount,
@@ -213,7 +204,11 @@ func renderWispGCDeleteResult(ids []string, res domain.DeleteIssuesResult) error
 			"events_removed":       res.EventsCount,
 			"references_updated":   res.ReferencesUpdated,
 			"orphaned_issues":      res.OrphanedIssues,
-		})
+		}
+		for key, value := range retentionReport(retentionKept) {
+			answer[key] = value
+		}
+		return outputJSON(answer)
 	}
 	fmt.Printf("%s Deleted %d issue(s)\n", ui.RenderPass("✓"), res.DeletedCount)
 	fmt.Printf("  Removed %d dependency link(s)\n", res.DependenciesCount)
@@ -262,50 +257,28 @@ func runWispPurgeClosedProxiedServer(ctx context.Context, dryRun, force bool, ex
 		}
 		filtered = append(filtered, issue)
 	}
-	closedIssues = filtered
+	retainedSetting, err := uw.ConfigUseCase().GetConfig(ctx, issueops.SettingKeyTypesRetained)
 	uw.Close(ctx)
-
-	if pinnedCount > 0 && !jsonOutput {
-		fmt.Printf("Skipping %d pinned issue(s) (protected from cleanup)\n", pinnedCount)
+	if err != nil {
+		return HandleError("reading %s: %v", issueops.SettingKeyTypesRetained, err)
 	}
-	if infraCount > 0 && !jsonOutput {
-		fmt.Printf("Skipping %d configured infra issue(s) protected from GC\n", infraCount)
-	}
+	closedIssues, retentionKept := holdBackRetainedTypes(filtered, retainedSetting)
 
-	if len(closedIssues) == 0 {
-		if jsonOutput {
-			return outputJSON(map[string]interface{}{
-				"deleted_count": 0,
-				"message":       "No closed wisps to delete",
-			})
-		}
-		fmt.Println("No closed wisps to delete")
-		return nil
-	}
-
-	ids := make([]string, len(closedIssues))
-	for i, issue := range closedIssues {
-		ids[i] = issue.ID
-	}
-
-	if !force && !dryRun {
-		if jsonOutput {
-			return outputJSON(map[string]interface{}{
-				"candidates": len(ids),
-				"dry_run":    true,
-			})
-		}
-		fmt.Printf("Found %d closed wisp(s) to delete\n", len(ids))
-		fmt.Printf("\nUse --force to proceed, or --dry-run for detailed preview.\n")
-		return nil
+	ids, done, err := reportClosedWispPurge(closedIssues, pinnedCount, infraCount, retentionKept, force, dryRun)
+	if done {
+		return err
 	}
 
 	if dryRun {
 		if jsonOutput {
-			return outputJSON(map[string]interface{}{
+			answer := map[string]interface{}{
 				"candidates": len(ids),
 				"dry_run":    true,
-			})
+			}
+			for key, value := range retentionReport(retentionKept) {
+				answer[key] = value
+			}
+			return outputJSON(answer)
 		}
 		fmt.Printf("Found %d closed wisp(s)\n", len(ids))
 		fmt.Println("DRY RUN - no changes will be made")
@@ -331,5 +304,5 @@ func runWispPurgeClosedProxiedServer(ctx context.Context, dryRun, force bool, ex
 		return HandleError("%v", err)
 	}
 
-	return renderWispGCDeleteResult(ids, res)
+	return renderWispGCDeleteResult(ids, res, retentionKept)
 }

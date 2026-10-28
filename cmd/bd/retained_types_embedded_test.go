@@ -14,10 +14,10 @@ import (
 
 // TestEmbeddedRetainedTypes drives the workspace's types.retained guard end to
 // end through the CLI on the direct route: with a type named in the setting,
-// a plain `bd prune`, `bd purge` and `bd gc` keep that type's closed beads and
-// say how many they kept (text and --json); `bd prune --retain-ids` then
-// deletes and retires them; and `bd delete`, which names its ids one by one,
-// still deletes one.
+// a plain `bd prune`, `bd purge`, `bd gc` and `bd mol wisp gc` keep that
+// type's beads and say how many they kept (text and --json); `bd prune
+// --retain-ids` then deletes and retires them; and `bd delete`, which names its
+// ids one by one, still deletes one.
 func TestEmbeddedRetainedTypes(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -137,6 +137,42 @@ func TestEmbeddedRetainedTypes(t *testing.T) {
 		report := runJSON("gc", "--older-than", "0", "--force", "--skip-dolt")
 		if report["retention_required"] != float64(2) {
 			t.Errorf("bd gc --json = %v, want retention_required 2", report)
+		}
+	})
+
+	// `bd mol wisp gc` deletes through the Deleter role, which writes no
+	// tombstone, so it keeps retained wisps in both of its modes. By now the
+	// workspace holds one closed retained wisp from the purge subtest.
+	t.Run("wisp gc keeps a retained type", func(t *testing.T) {
+		keptClosed := closedChore("rk-wisp1", "--ephemeral")
+		other := bdCreate(t, bd, dir, "collected", "--id", "rk-wisp2", "--type", "task", "--ephemeral").ID
+		bdClose(t, bd, dir, other)
+		preview := runJSON("mol", "wisp", "gc", "--closed")
+		if preview["candidates"] != float64(1) || preview["retention_required"] != float64(2) {
+			t.Errorf("bd mol wisp gc --closed --json = %v, want candidates 1 and retention_required 2", preview)
+		}
+		out, stderr, code := run("mol", "wisp", "gc", "--closed", "--force")
+		if code != 0 || !strings.Contains(out, "Kept 2 closed wisp(s) of a retained type") {
+			t.Errorf("bd mol wisp gc --closed --force exited %d:\n%s\n%s\nwant the kept-retained line", code, out, stderr)
+		}
+		if !exists(keptClosed) {
+			t.Fatalf("bd mol wisp gc --closed deleted %s, a wisp of a retained type", keptClosed)
+		}
+		if exists(other) {
+			t.Errorf("bd mol wisp gc --closed kept %s, which is not of a retained type", other)
+		}
+
+		abandoned := bdCreate(t, bd, dir, "abandoned keyed", "--id", "rk-wisp3", "--type", "chore", "--ephemeral").ID
+		// --age 0s makes every wisp abandoned without a clock comparison
+		// (wispIsAbandoned). A small positive age is not enough: updated_at is
+		// a DATETIME(0), which Dolt rounds half-up, so a wisp created a few
+		// milliseconds ago can read back as not yet that old.
+		report := runJSON("mol", "wisp", "gc", "--age", "0s", "--all")
+		if report["cleaned_count"] != float64(0) || report["retention_required"] != float64(3) {
+			t.Errorf("bd mol wisp gc --all --json = %v, want cleaned_count 0 and retention_required 3", report)
+		}
+		if !exists(abandoned) || !exists(keptClosed) {
+			t.Fatalf("bd mol wisp gc --all deleted a wisp of a retained type")
 		}
 	})
 

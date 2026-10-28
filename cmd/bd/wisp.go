@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/issueops"
 )
 
 // Wisp commands - manage ephemeral molecules
@@ -634,6 +635,10 @@ Use --closed to purge ALL closed wisps (regardless of age). This is the
 fastest way to reclaim space from accumulated wisp bloat. Safe by default:
 requires --force to actually delete.
 
+In every mode, wisps of a type the workspace's types.retained setting names
+are kept (their ids are idempotency keys; only bd prune/purge --retain-ids
+deletes them); --json reports them as retention_required.
+
 Note: This uses time-based cleanup, appropriate for ephemeral wisps.
 For graph-pressure staleness detection (blocking other work), see 'bd mol stale'.
 
@@ -658,6 +663,9 @@ type WispGCResult struct {
 	CleanedCount int      `json:"cleaned_count"`
 	Candidates   int      `json:"candidates,omitempty"`
 	DryRun       bool     `json:"dry_run,omitempty"`
+	// RetentionRequired counts the wisps kept because their type is one the
+	// workspace retains (types.retained); absent when none were.
+	RetentionRequired int `json:"retention_required,omitempty"`
 }
 
 // protectedWispStatuses returns the statuses whose category means a wisp is
@@ -776,39 +784,14 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: cascade expansion incomplete: %v\n", err)
 	}
-
-	if len(abandoned) == 0 {
-		if jsonOutput {
-			return outputJSON(WispGCResult{
-				CleanedIDs:   []string{},
-				CleanedCount: 0,
-				DryRun:       dryRun,
-			})
-		}
-		fmt.Println("No abandoned wisps found")
-		return nil
+	retainedSetting, err := store.GetConfig(ctx, issueops.SettingKeyTypesRetained)
+	if err != nil {
+		return HandleError("reading %s: %v", issueops.SettingKeyTypesRetained, err)
 	}
+	abandoned, retentionKept := holdBackRetainedTypes(abandoned, retainedSetting)
 
-	if dryRun {
-		if jsonOutput {
-			ids := make([]string, len(abandoned))
-			for i, o := range abandoned {
-				ids[i] = o.ID
-			}
-			return outputJSON(WispGCResult{
-				CleanedIDs:   ids,
-				Candidates:   len(abandoned),
-				CleanedCount: 0,
-				DryRun:       true,
-			})
-		}
-		fmt.Printf("Dry run: would clean %d abandoned wisp(s):\n\n", len(abandoned))
-		for _, issue := range abandoned {
-			age := formatTimeAgo(issue.UpdatedAt)
-			fmt.Printf("  %s: %s (last updated: %s)\n", issue.ID, issue.Title, age)
-		}
-		fmt.Printf("\nRun without --dry-run to delete these wisps.\n")
-		return nil
+	if done, err := reportAbandonedWisps(abandoned, retentionKept, dryRun); done {
+		return err
 	}
 
 	ids := make([]string, len(abandoned))
@@ -823,7 +806,7 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 	// cascade bypasses it) and fresh steps the --age check just spared.
 	// Without cascade the list is deleted exactly as filtered and live
 	// dependents are orphaned (edges dropped, is_blocked recomputed).
-	if err := deleteBatch(nil, ids, true, false, false, jsonOutput, false, nil, "wisp gc"); err != nil {
+	if err := deleteBatchReporting(ids, true, false, false, jsonOutput, nil, retentionReport(retentionKept)); err != nil {
 		return HandleError("%v", err)
 	}
 	return nil
@@ -852,6 +835,52 @@ func wispIsAbandoned(now, updatedAt time.Time, ageThreshold time.Duration) bool 
 // tests. Both gc routes read it, so a test that swaps it must not call
 // t.Parallel().
 var wispGCNow = time.Now
+
+// reportAbandonedWisps answers the age GC's two outcomes that delete nothing
+// — no candidate, and a dry run — for both routes, and reports whether it
+// answered. retentionKept is the count of wisps held back because their type
+// is retained (types.retained): the text names it and --json carries it as
+// retention_required.
+func reportAbandonedWisps(abandoned []*types.Issue, retentionKept int, dryRun bool) (bool, error) {
+	if retentionKept > 0 && !jsonOutput {
+		fmt.Println(retainedTypesKeptLine(retentionKept, "wisp(s)"))
+	}
+	if len(abandoned) == 0 {
+		if jsonOutput {
+			return true, outputJSON(WispGCResult{
+				CleanedIDs:        []string{},
+				CleanedCount:      0,
+				DryRun:            dryRun,
+				RetentionRequired: retentionKept,
+			})
+		}
+		fmt.Println("No abandoned wisps found")
+		return true, nil
+	}
+	if !dryRun {
+		return false, nil
+	}
+	if jsonOutput {
+		ids := make([]string, len(abandoned))
+		for i, o := range abandoned {
+			ids[i] = o.ID
+		}
+		return true, outputJSON(WispGCResult{
+			CleanedIDs:        ids,
+			Candidates:        len(abandoned),
+			CleanedCount:      0,
+			DryRun:            true,
+			RetentionRequired: retentionKept,
+		})
+	}
+	fmt.Printf("Dry run: would clean %d abandoned wisp(s):\n\n", len(abandoned))
+	for _, issue := range abandoned {
+		age := formatTimeAgo(issue.UpdatedAt)
+		fmt.Printf("  %s: %s (last updated: %s)\n", issue.ID, issue.Title, age)
+	}
+	fmt.Printf("\nRun without --dry-run to delete these wisps.\n")
+	return true, nil
+}
 
 func findAbandonedWisps(ctx context.Context, r molReader, cleanAll bool, ageThreshold time.Duration, excludeTypes []types.IssueType) ([]*types.Issue, error) {
 	ephemeralFlag := true
@@ -975,41 +1004,15 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool, excludeTyp
 		}
 		filtered = append(filtered, issue)
 	}
-	closedIssues = filtered
-
-	if pinnedCount > 0 && !jsonOutput {
-		fmt.Printf("Skipping %d pinned issue(s) (protected from cleanup)\n", pinnedCount)
+	retainedSetting, err := store.GetConfig(ctx, issueops.SettingKeyTypesRetained)
+	if err != nil {
+		return HandleError("reading %s: %v", issueops.SettingKeyTypesRetained, err)
 	}
-	if infraCount > 0 && !jsonOutput {
-		fmt.Printf("Skipping %d configured infra issue(s) protected from GC\n", infraCount)
-	}
+	closedIssues, retentionKept := holdBackRetainedTypes(filtered, retainedSetting)
 
-	if len(closedIssues) == 0 {
-		if jsonOutput {
-			return outputJSON(map[string]interface{}{
-				"deleted_count": 0,
-				"message":       "No closed wisps to delete",
-			})
-		}
-		fmt.Println("No closed wisps to delete")
-		return nil
-	}
-
-	ids := make([]string, len(closedIssues))
-	for i, issue := range closedIssues {
-		ids[i] = issue.ID
-	}
-
-	if !force && !dryRun {
-		if jsonOutput {
-			return outputJSON(map[string]interface{}{
-				"candidates": len(ids),
-				"dry_run":    true,
-			})
-		}
-		fmt.Printf("Found %d closed wisp(s) to delete\n", len(ids))
-		fmt.Printf("\nUse --force to proceed, or --dry-run for detailed preview.\n")
-		return nil
+	ids, done, err := reportClosedWispPurge(closedIssues, pinnedCount, infraCount, retentionKept, force, dryRun)
+	if done {
+		return err
 	}
 
 	if !jsonOutput {
@@ -1029,7 +1032,7 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool, excludeTyp
 	// Without cascade, closed wisps are deleted and live dependents are
 	// orphaned (edges dropped, is_blocked recomputed) — the same semantics as
 	// a plain `bd delete`.
-	if err := deleteBatch(nil, ids, force, dryRun, false, jsonOutput, false, nil, "wisp gc --closed"); err != nil {
+	if err := deleteBatchReporting(ids, force, dryRun, false, jsonOutput, nil, retentionReport(retentionKept)); err != nil {
 		return HandleError("%v", err)
 	}
 
@@ -1037,6 +1040,62 @@ func runWispPurgeClosed(ctx context.Context, dryRun bool, force bool, excludeTyp
 		fmt.Printf("\nHint: Run 'bd compact --dolt' to reclaim disk space\n")
 	}
 	return nil
+}
+
+// reportClosedWispPurge prints what `bd mol wisp gc --closed` held back and
+// answers its two outcomes that delete nothing — no candidate, and the
+// unconfirmed preview — for both routes. It returns the candidate ids and
+// whether it answered. retentionKept counts the closed wisps held back because
+// their type is retained (types.retained), carried in --json as
+// retention_required: the purge deletes through the Deleter role, which writes
+// no tombstone, so those wisps are never its to take.
+func reportClosedWispPurge(closed []*types.Issue, pinnedCount, infraCount, retentionKept int, force, dryRun bool) ([]string, bool, error) {
+	if !jsonOutput {
+		if pinnedCount > 0 {
+			fmt.Printf("Skipping %d pinned issue(s) (protected from cleanup)\n", pinnedCount)
+		}
+		if infraCount > 0 {
+			fmt.Printf("Skipping %d configured infra issue(s) protected from GC\n", infraCount)
+		}
+		if retentionKept > 0 {
+			fmt.Println(retainedTypesKeptLine(retentionKept, "closed wisp(s)"))
+		}
+	}
+	withRetention := func(answer map[string]interface{}) map[string]interface{} {
+		for key, value := range retentionReport(retentionKept) {
+			answer[key] = value
+		}
+		return answer
+	}
+
+	if len(closed) == 0 {
+		if jsonOutput {
+			return nil, true, outputJSON(withRetention(map[string]interface{}{
+				"deleted_count": 0,
+				"message":       "No closed wisps to delete",
+			}))
+		}
+		fmt.Println("No closed wisps to delete")
+		return nil, true, nil
+	}
+
+	ids := make([]string, len(closed))
+	for i, issue := range closed {
+		ids[i] = issue.ID
+	}
+
+	if !force && !dryRun {
+		if jsonOutput {
+			return ids, true, outputJSON(withRetention(map[string]interface{}{
+				"candidates": len(ids),
+				"dry_run":    true,
+			}))
+		}
+		fmt.Printf("Found %d closed wisp(s) to delete\n", len(ids))
+		fmt.Printf("\nUse --force to proceed, or --dry-run for detailed preview.\n")
+		return ids, true, nil
+	}
+	return ids, false, nil
 }
 
 func init() {

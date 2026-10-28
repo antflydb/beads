@@ -11,8 +11,8 @@ import (
 
 // TestProxiedServerRetainedTypes is TestEmbeddedRetainedTypes on the proxied
 // route, whose `bd gc` decay reads through its own unit of work rather than
-// the store: with types.retained naming a type, a plain `bd prune` and
-// `bd gc` keep that type's closed beads and report them as
+// the store: with types.retained naming a type, a plain `bd prune`, `bd gc`
+// and `bd mol wisp gc` keep that type's beads and report them as
 // retention_required under --json.
 func TestProxiedServerRetainedTypes(t *testing.T) {
 	requireSharedProxiedServer(t)
@@ -53,5 +53,30 @@ func TestProxiedServerRetainedTypes(t *testing.T) {
 	}
 	if out, err := bdProxiedRun(t, bd, p.dir, "show", keyed, "--json"); err != nil {
 		t.Errorf("bd show %s after a plain prune and gc: %v\n%s; a retained bead was deleted", keyed, err, out)
+	}
+
+	// `bd mol wisp gc` reads the setting on its own unit of work on this
+	// route, in both modes.
+	keyedWisp := bdProxiedCreate(t, bd, p.dir, "keyed wisp", "--id", "pk-keyed2", "--type", "chore", "--ephemeral").ID
+	if out, err := bdProxiedRun(t, bd, p.dir, "close", keyedWisp); err != nil {
+		t.Fatalf("bd close %s: %v\n%s", keyedWisp, err, out)
+	}
+	purged := decayJSON("mol", "wisp", "gc", "--closed", "--force")
+	if purged["retention_required"] != float64(1) {
+		t.Errorf("bd mol wisp gc --closed --force --json = %v, want retention_required 1", purged)
+	}
+	openWisp := bdProxiedCreate(t, bd, p.dir, "abandoned keyed wisp", "--id", "pk-keyed3", "--type", "chore", "--ephemeral").ID
+	// --age 0s makes every wisp abandoned without a clock comparison
+	// (wispIsAbandoned). A small positive age is not enough: updated_at is a
+	// DATETIME(0), which Dolt rounds half-up, so a wisp created a few
+	// milliseconds ago can read back as not yet that old.
+	aged := decayJSON("mol", "wisp", "gc", "--age", "0s", "--all")
+	if aged["retention_required"] != float64(2) {
+		t.Errorf("bd mol wisp gc --all --json = %v, want retention_required 2", aged)
+	}
+	for _, id := range []string{keyedWisp, openWisp} {
+		if out, err := bdProxiedRun(t, bd, p.dir, "show", id, "--json"); err != nil {
+			t.Errorf("bd show %s after bd mol wisp gc: %v\n%s; a retained wisp was deleted", id, err, out)
+		}
 	}
 }
