@@ -202,6 +202,12 @@ func TestSweepPublishesTheWholeResult(t *testing.T) {
 	}
 }
 
+// sweepRoleFieldsNotYetOnTheWire names the issueops.SweepResult fields the
+// storage layer has and the wire does not project yet. Each entry is a waiver
+// the commit that adds the field to the wire removes: RetainIDs reaches
+// issues:sweep with the retain_ids member and its behavior token.
+var sweepRoleFieldsNotYetOnTheWire = map[string]bool{"RetainIDs": true}
+
 // TestSweepResponseCarriesEveryRoleField is the guard sweepResponse's comment
 // names, the sweep twin of TestDeleteResponseCarriesEveryRoleField. It counts
 // fields at both levels the projection copies — the result and its skip
@@ -225,9 +231,15 @@ func TestSweepResponseCarriesEveryRoleField(t *testing.T) {
 		{full.Skipped, body.Skipped},
 	} {
 		role, wire := reflect.TypeOf(level.role), reflect.TypeOf(level.wire)
-		if role.NumField() != wire.NumField() {
+		roleFields := role.NumField()
+		for i := range role.NumField() {
+			if sweepRoleFieldsNotYetOnTheWire[role.Field(i).Name] {
+				roleFields--
+			}
+		}
+		if roleFields != wire.NumField() {
 			t.Errorf("%v has %d fields and %v has %d: a field was added to one and not projected onto the "+
-				"other (see sweepResponse)", role, role.NumField(), wire, wire.NumField())
+				"other (see sweepResponse)", role, roleFields, wire, wire.NumField())
 		}
 	}
 	requireEveryFieldSet(t, reflect.ValueOf(body), "SweepResult")

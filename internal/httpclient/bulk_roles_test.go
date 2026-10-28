@@ -216,7 +216,10 @@ func TestSweepResultCarriesEveryWireMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sweep(): %v", err)
 	}
-	assertEveryFieldPopulated(t, "SweepResult", reflect.ValueOf(result))
+	// RetainIDs is skipped while the wire carries no retain_ids member
+	// (W-SweepRequest.RetainIDs): this client refuses a retaining sweep, so a
+	// result can only echo false.
+	assertEveryFieldPopulated(t, "SweepResult", reflect.ValueOf(result), "RetainIDs")
 	assertEveryFieldPopulated(t, "SweepSkips", reflect.ValueOf(result.Skipped))
 	if !reflect.DeepEqual(result.ReferencedIDs, []string{"bd-1"}) {
 		t.Errorf("ReferencedIDs = %v, want [bd-1]", result.ReferencedIDs)
@@ -284,6 +287,21 @@ func TestSweepSendsTheS4MembersOnceTheServerAdvertisesThem(t *testing.T) {
 			t.Errorf("limit = %v, want 5", w.lastSweep.Limit)
 		}
 	})
+}
+
+// TestSweepRefusesRetainIDsUntilTheWireCarriesIt pins W-SweepRequest.RetainIDs:
+// a retaining sweep fails before the dial with the typed refusal, so it can
+// never run as a plain sweep that leaves the swept ids reusable.
+func TestSweepRefusesRetainIDsUntilTheWireCarriesIt(t *testing.T) {
+	w := &stubWire{}
+	_, err := bulkSweeper(t, w).Sweep(t.Context(), issueops.SweepRequest{Tier: issueops.SweepDurable, IDPattern: "*", RetainIDs: true})
+	var unsup *storage.ErrUnsupported
+	if !errors.As(err, &unsup) || !errors.Is(err, encode.ErrRefused) {
+		t.Fatalf("Sweep(RetainIDs) = %v, want the W-SweepRequest.RetainIDs refusal (ErrUnsupported and ErrRefused)", err)
+	}
+	if len(w.calls) != 0 {
+		t.Errorf("dialed %v, want none: the refusal is pre-dial", w.calls)
+	}
 }
 
 // TestSweepRefusesTheS4MembersWhenTheServerLacksTheCapability is the skew half:

@@ -96,9 +96,13 @@ func (s *sweeper) Sweep(ctx context.Context, req issueops.SweepRequest) (issueop
 }
 
 // sweptTables are the versioned tables a sweep can touch, staged before the
-// commit. It is the same list DeleteIssues stages, because a sweep IS a
-// delete of a selected set.
-var sweptTables = []string{
+// commit: the row tables DeleteIssues stages (a sweep IS a delete of a
+// selected set) plus the id tombstone tables, which DeleteIssues never writes.
+//
+// The tombstone tables are on it for the retaining sweep
+// (issueops.SweepRequest.RetainIDs): the versioned one must land in the same
+// commit as the deletes it records, and staging the clone-local one is a no-op.
+var sweptTables = append([]string{
 	"issues", "dependencies", "labels", "comments", "events", "provenance_events",
 	"child_counters", "issue_snapshots", "compaction_snapshots",
-}
+}, storeops.IDTombstoneTables()...)

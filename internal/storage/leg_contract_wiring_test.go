@@ -57,6 +57,16 @@ const asOfReadNoHTTPWireWaiverReason = "the read under test has no form on the h
 	"instant/version-address selector nor a gone/unknown refusal, and the client's only point-in-time read, " +
 	"DoltStorage.AsOf, is a Dolt commit-ref read on its unsupported allowlist (D8)"
 
+// idRetentionWireLandsNextWaiverReason is why every IDRetention case stops
+// short of the http leg for now: the contract and its storage legs land first
+// (one layer per change), and the wire it needs — `retain_ids` on
+// issues:sweep, the 410 idempotency_expired refusal on the create doors, and
+// the served fixture — lands in the next change of the same series, which
+// replaces these waivers with the served leg's wiring.
+const idRetentionWireLandsNextWaiverReason = "the IDRetention wire (issues:sweep retain_ids, the 410 " +
+	"idempotency_expired refusal, the served fixture) lands in the next change of this series, which wires the " +
+	"http leg and retires this waiver"
+
 // The waivers of the three legs registered here. Each is registered beside its
 // leg rather than written into one literal, so a leg registered elsewhere
 // brings its waivers the same way; see unwiredContractEntrypoints.
@@ -86,6 +96,24 @@ func init() {
 		"RunAsOfReadReportsTheAddressItServed":                                asOfReadNoHTTPWireWaiverReason,
 		"RunAsOfReadReturnsTheLatestVersionAtOrBeforeTStrictlyExcludingLater": asOfReadNoHTTPWireWaiverReason,
 		"RunAsOfReadSelectorAcceptsEitherAnInstantOrAVersionAddress":          asOfReadNoHTTPWireWaiverReason,
+
+		"RunIDRetentionAPlainSweepLeavesTheIDReusable":                      idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionARetainingSweepRetiresEverySweptID":                  idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionRefusesARecreateThroughCreate":                       idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionRefusesARecreateOnTheOtherPlane":                     idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionRefusesThroughABatchApply":                           idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionRefusesThroughABatchCreate":                          idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionRefusesThroughTheStorageSeam":                        idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionRefusesInsideATransaction":                           idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionImportSkipsAndReportsARetiredRow":                    idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionNeverMintsARetiredID":                                idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionDryRunRetiresNothing":                                idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionRetiresOnlyWhatItSwept":                              idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionARetainingDurableSweepRecordsExactlyOneHistoryEntry": idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionARacingRecreateNeverLands":                           idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionARacingUpsertNeverResurrects":                        idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionARacingImportNeverResurrects":                        idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionRefusesANoHistoryRecreateThroughEveryDoor":           idRetentionWireLandsNextWaiverReason,
 
 		"RunCycleDetectorIncludeTracksFindsTheMoleculeRootShape":         cycleTracksWireGapWaiverReason,
 		"RunCycleDetectorIncludeTracksIgnoresAPureTracksLoop":            cycleTracksWireGapWaiverReason,

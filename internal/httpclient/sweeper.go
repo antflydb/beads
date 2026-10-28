@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/httpapi/apigen"
+	"github.com/steveyegge/beads/internal/httpclient/encode"
 	"github.com/steveyegge/beads/internal/httpclient/wire"
 	"github.com/steveyegge/beads/issueops"
 )
@@ -68,6 +69,14 @@ func (s *httpSweeper) Sweep(ctx context.Context, req issueops.SweepRequest) (res
 	if !tier.Valid() {
 		return issueops.SweepResult{}, invalid("sweep tier %q is not %q, %q, or %q",
 			string(req.Tier), apigen.Ephemeral, apigen.Durable, apigen.WispsPlane)
+	}
+
+	// RetainIDs has no wire member yet (W-SweepRequest.RetainIDs): a sweep
+	// that dropped it would delete the rows and leave every swept id
+	// reusable, the re-execution the caller asked retention to rule out. It
+	// is refused before the dial instead.
+	if req.RetainIDs {
+		return issueops.SweepResult{}, refuse(encode.OpSweepIssues, "W-SweepRequest.RetainIDs")
 	}
 
 	// refuseUnservedSweep is the pre-dial half of the three Sweep behavior

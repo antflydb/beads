@@ -1013,6 +1013,15 @@ func writeSideRows() []Row {
 			PinnedBy: pinnedByS3Conformance,
 		},
 		{
+			ID: "W-SweepRequest.RetainIDs", Kind: KindRefuse,
+			Type: tySweepRequest, Field: "RetainIDs",
+			What: "retiring the ids a sweep deletes refuses",
+			Why: "the local Sweeper role can write a permanent tombstone for every id it deletes, and apigen.SweepRequest has no retain_ids member for this client to narrow onto. Dropping the field would run the sweep and leave every swept id reusable, so a late retry of an operation keyed by one of them would run it again: the exact outcome the caller asked retention to rule out. " +
+				"It refuses before the dial rather than degrading",
+			SpecRow:  "D8 refuse-not-drop",
+			PinnedBy: "TestSweepRefusesRetainIDsUntilTheWireCarriesIt",
+		},
+		{
 			ID: "W-SweepRequest.ProtectLiveDependents", Kind: KindRetired,
 			Type: tySweepRequest, Field: "ProtectLiveDependents",
 			What: "protecting live structural dependents during a sweep used to refuse",

@@ -363,6 +363,27 @@ var roleContractCases = []roleContract{
 		RunGraphCounterWritesNothing,
 	),
 
+	roleCases("IDRetention", "Sweeper(), Lifecycle(), Reader(), BatchApplier(), BatchCreator(), Importer()", oncePerRole,
+		func(b RoleContractBundle) func(t *testing.T) *IDRetentionFixture { return b.IDRetention },
+		RunIDRetentionAPlainSweepLeavesTheIDReusable,
+		RunIDRetentionARetainingSweepRetiresEverySweptID,
+		RunIDRetentionRefusesARecreateThroughCreate,
+		RunIDRetentionRefusesARecreateOnTheOtherPlane,
+		RunIDRetentionRefusesThroughABatchApply,
+		RunIDRetentionRefusesThroughABatchCreate,
+		RunIDRetentionRefusesThroughTheStorageSeam,
+		RunIDRetentionRefusesInsideATransaction,
+		RunIDRetentionImportSkipsAndReportsARetiredRow,
+		RunIDRetentionNeverMintsARetiredID,
+		RunIDRetentionDryRunRetiresNothing,
+		RunIDRetentionRetiresOnlyWhatItSwept,
+		RunIDRetentionARetainingDurableSweepRecordsExactlyOneHistoryEntry,
+		RunIDRetentionARacingRecreateNeverLands,
+		RunIDRetentionARacingUpsertNeverResurrects,
+		RunIDRetentionARacingImportNeverResurrects,
+		RunIDRetentionRefusesANoHistoryRecreateThroughEveryDoor,
+	),
+
 	// The accessor named here is NOT a storage.DoltStorage one, alone among
 	// these rows: Importer is served only by uow.ImporterSource, so a backend
 	// built on the store interface has nothing to fill this field with and

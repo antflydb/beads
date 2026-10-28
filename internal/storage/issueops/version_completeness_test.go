@@ -484,6 +484,7 @@ var versionExemptions = map[string]string{
 	"RecordFullEventInTable":        "writes the events audit table (templated %s), not work-bead state",
 	"InsertDerivedEvent":            "writes the events audit table (templated %s), not work-bead state",
 	"InsertDerivedEventReturningID": "writes the events audit table (templated %s), not work-bead state",
+	"RetireIDsInTx":                 "writes the id tombstone tables (templated %s), not work-bead state; a tombstone is not part of any bead's durable_state",
 
 	// the seam itself: its UPDATE issues SET current_revision is the
 	// bookkeeping half of the mint, not a mutation that needs its own.
