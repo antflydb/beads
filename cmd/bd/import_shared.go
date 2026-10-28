@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -98,6 +99,11 @@ type ImportResult struct {
 	// row for these (second-granularity timestamp ties, bd-hj85c); their
 	// aux data still merges.
 	TieKeptLocalIDs []string
+	// RetiredIDs lists incoming rows the batch did not write because a
+	// retaining retention sweep retired their id (`bd prune/purge
+	// --retain-ids`): an import never resurrects a swept row. They are not
+	// counted in Created or Skipped.
+	RetiredIDs []string
 }
 
 // ImportChange describes how an import row modified an existing local issue.
@@ -174,6 +180,10 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 	// (local update committed between the pre-filter read and the batch
 	// write). The transaction may retry, so dedup by ID.
 	staleRejectedSet := make(map[string]struct{})
+	// Rows whose id a retaining sweep retired: skipped and reported rather
+	// than refused (the engine would otherwise fail the whole import with
+	// *issueops.IdempotencyExpiredError). The transaction may retry, so dedup.
+	retiredSet := make(map[string]struct{})
 	actor := getActorWithGit()
 	batchOpts := storage.BatchCreateOptions{
 		SkipPrefixValidation:           opts.SkipPrefixValidation,
@@ -191,6 +201,9 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		OnStaleRejected: func(issueID string) {
 			staleRejectedSet[issueID] = struct{}{}
 		},
+		OnRetiredID: func(issueID string) {
+			retiredSet[issueID] = struct{}{}
+		},
 	}
 	var err error
 	if len(issues) <= importChunkSize {
@@ -207,7 +220,7 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 		return nil, err
 	}
 
-	return assembleImportResult(issues, staleSkippedIDs, changePlan, staleRejectedSet, skippedDependencies), nil
+	return assembleImportResult(issues, staleSkippedIDs, changePlan, staleRejectedSet, retiredSet, skippedDependencies), nil
 }
 
 // assembleImportResult folds the batch write's in-transaction outcomes (stale
@@ -215,11 +228,16 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 // producing the report both the classic and the proxied import return. Kept
 // as ONE function so the two modes cannot drift on how a stale-rejected row
 // is attributed.
-func assembleImportResult(issues []*types.Issue, staleSkippedIDs []string, changePlan importChangePlan, staleRejectedSet map[string]struct{}, skippedDependencies []string) *ImportResult {
+func assembleImportResult(issues []*types.Issue, staleSkippedIDs []string, changePlan importChangePlan, staleRejectedSet, retiredSet map[string]struct{}, skippedDependencies []string) *ImportResult {
 	importedIDs := make([]string, 0, len(issues))
+	var retiredIDs []string
 	for _, issue := range issues {
 		if _, rejected := staleRejectedSet[issue.ID]; rejected {
 			staleSkippedIDs = append(staleSkippedIDs, issue.ID)
+			continue
+		}
+		if _, retired := retiredSet[issue.ID]; retired {
+			retiredIDs = append(retiredIDs, issue.ID)
 			continue
 		}
 		importedIDs = append(importedIDs, issue.ID)
@@ -245,6 +263,7 @@ func assembleImportResult(issues []*types.Issue, staleSkippedIDs []string, chang
 		SkippedDependencies: skippedDependencies,
 		UpdatedIssues:       updatedIssues,
 		TieKeptLocalIDs:     changePlan.TieKeptLocal,
+		RetiredIDs:          retiredIDs,
 	}
 }
 
@@ -1080,17 +1099,32 @@ func classifyDryRunImport(ctx context.Context, store importIssueLookup, issues [
 		if err != nil {
 			return nil, err
 		}
+		retiredIDs, err := excludeRetiredFromImportPlan(ctx, store, issues, &plan)
+		if err != nil {
+			return nil, err
+		}
 		return &ImportResult{
 			Created:       plan.NewCount,
 			Updated:       len(plan.Updates),
 			ImportedIDs:   plan.NewIDs,
 			UpdatedIssues: plan.Updates,
+			RetiredIDs:    retiredIDs,
 		}, nil
 	}
 
 	filtered, staleSkippedIDs, plan, err := filterStaleImportIssues(ctx, store, issues)
 	if err != nil {
 		return nil, err
+	}
+	considered := len(filtered)
+	retiredIDs, err := excludeRetiredFromImportPlan(ctx, store, filtered, &plan)
+	if err != nil {
+		return nil, err
+	}
+	for _, issue := range filtered {
+		if issue != nil && slices.Contains(retiredIDs, issue.ID) {
+			considered--
+		}
 	}
 	// TieKeptLocal rows are not rewritten (the stale-guarded upsert keeps
 	// every stored column), so they belong in Unchanged, not Updated —
@@ -1100,13 +1134,73 @@ func classifyDryRunImport(ctx context.Context, store importIssueLookup, issues [
 	return &ImportResult{
 		Created:         created,
 		Updated:         updated,
-		Unchanged:       len(filtered) - created - updated + len(plan.Unchanged),
+		Unchanged:       considered - created - updated + len(plan.Unchanged),
 		Skipped:         len(staleSkippedIDs),
 		ImportedIDs:     plan.NewIDs,
 		StaleSkippedIDs: staleSkippedIDs,
 		UpdatedIssues:   plan.Updates,
 		TieKeptLocalIDs: plan.TieKeptLocal,
+		RetiredIDs:      retiredIDs,
 	}, nil
+}
+
+// importRetiredLookup is the OPTIONAL read seam that lets a dry run see what
+// the real import will: which would-create ids a retaining sweep retired. The
+// real import skips such a row and reports it in RetiredIDs (the create body's
+// guard, via BatchCreateOptions.OnRetiredID), so a preview that counted it as
+// a create would disagree with the run it previews. The direct stores (under
+// their decorators) and the proxied unit of work implement it, and the https
+// route answers it from the server's own dry run (httpDryRunLookup). A store
+// that does not (test fakes) previews without it.
+type importRetiredLookup interface {
+	RetiredIssueIDs(ctx context.Context, ids []string) (map[string]time.Time, error)
+}
+
+// excludeRetiredFromImportPlan takes the plan's would-create ids that a
+// retaining sweep retired out of NewIDs and NewCount (rows, counted the way
+// NewCount counts them, over rows) and returns them, deduplicated in file
+// order. Only would-create ids are asked about: a live row wins over its
+// tombstone, so a row matching a stored issue is never a retired skip.
+func excludeRetiredFromImportPlan(ctx context.Context, store importIssueLookup, rows []*types.Issue, plan *importChangePlan) ([]string, error) {
+	if len(plan.NewIDs) == 0 {
+		return nil, nil
+	}
+	lookup, ok := store.(importRetiredLookup)
+	if !ok {
+		// The CLI's store is decorated (hooks, telemetry); the seam lives on
+		// the backend underneath.
+		if decorated, isStore := store.(storage.DoltStorage); isStore {
+			lookup, ok = storage.UnwrapStore(decorated).(importRetiredLookup)
+		}
+	}
+	if !ok {
+		return nil, nil
+	}
+	retired, err := lookup.RetiredIssueIDs(ctx, plan.NewIDs)
+	if err != nil {
+		return nil, fmt.Errorf("read retired ids: %w", err)
+	}
+	if len(retired) == 0 {
+		return nil, nil
+	}
+	var retiredIDs []string
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		if _, isRetired := retired[row.ID]; !isRetired {
+			continue
+		}
+		plan.NewCount--
+		if !slices.Contains(retiredIDs, row.ID) {
+			retiredIDs = append(retiredIDs, row.ID)
+		}
+	}
+	plan.NewIDs = slices.DeleteFunc(plan.NewIDs, func(id string) bool {
+		_, isRetired := retired[id]
+		return isRetired
+	})
+	return retiredIDs, nil
 }
 
 // importRowChangeSummary summarizes the differences between the local issue

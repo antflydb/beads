@@ -5771,6 +5771,12 @@ bd prune
     | To delete closed ephemeral beads (wisps, transient molecules) use
     | `bd purge` instead.
     |
+    | --retain-ids retires every id the sweep deletes: a permanent tombstone (the id
+    | and its closed_at) is written in the same transaction, and from then on a
+    | create naming that id is refused (code idempotency_expired) and an import
+    | skips it. Use it when ids are idempotency keys that must never run twice.
+    | Tombstones are permanent.
+    |
     | For full Dolt storage reclaim after deleting many rows, follow with `bd flatten`
     | so history can be collapsed and old chunks can be garbage-collected.
     |
@@ -5785,6 +5791,7 @@ bd prune
   flag --ignore-references type=bool default="false" usage="Delete closed beads even when referenced by open beads (use with care; see --help for details)"
   flag --older-than type=string default="" usage="Only prune beads closed more than N ago (e.g., 30d, 2w, 60, 36h)"
   flag --pattern type=string default="" usage="Only prune beads matching ID glob pattern (e.g., 'gm-old-*')"
+  flag --retain-ids type=bool default="false" usage="Retire every pruned id with a permanent tombstone so it can never be created again (see --help)"
 
 bd purge
   use: "purge"
@@ -5815,6 +5822,12 @@ bd purge
     | --older-than takes days (7, 7d), weeks (2w) or a duration with hour precision
     | (36h, 168h, 90m).
     |
+    | --retain-ids retires every id the sweep deletes: a permanent tombstone (the id
+    | and its closed_at) is written in the same transaction, and from then on a
+    | create naming that id is refused (code idempotency_expired) and an import
+    | skips it. Use it when ids are idempotency keys that must never run twice.
+    | Tombstones are permanent.
+    |
     | To delete closed non-ephemeral beads (regular tasks, features, bugs, etc.)
     | use `bd prune` instead.
     |
@@ -5835,6 +5848,7 @@ bd purge
   flag --limit type=int default="0" usage="Purge at most N beads this run, oldest-closed first (0 = no limit); --json reports remaining/has_more"
   flag --older-than type=string default="" usage="Only purge beads closed more than N ago (e.g., 7d, 2w, 30, 36h)"
   flag --pattern type=string default="" usage="Only purge beads matching ID glob pattern (e.g., *-wisp-*)"
+  flag --retain-ids type=bool default="false" usage="Retire every purged id with a permanent tombstone so it can never be created again (see --help)"
   flag --wisps-plane type=bool default="false" usage="Select every closed row in the wisps table, including --no-history beads (requires --older-than or --pattern)"
 
 bd q

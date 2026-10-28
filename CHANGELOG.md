@@ -37,6 +37,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unknown column; through a gateway server the refusal asks the server
   administrator to upgrade the database. A database behind the binary that
   still has every column the reads select keeps serving them as before.
+- **Retention sweeps can retire the ids they delete** (BDP
+  `idempotency-expired`). `issueops.SweepRequest.RetainIDs` — `bd prune
+  --retain-ids`, `bd purge --retain-ids`, `retain_ids` on
+  `POST /v0/beads/issues:sweep` behind the new `issues.sweep.retainIds`
+  capability — writes one permanent tombstone (the id and its `closed_at`,
+  nothing else) per deleted row, in the same transaction as the delete and in
+  the tombstone table of the row's own plane (`id_tombstones`, versioned;
+  `wisp_id_tombstones`, clone-local; migration 0074 and ignored 0030). From
+  then on no write path commits that id again: every create — `Lifecycle.Create`,
+  `BatchApplier`/`BatchCreator` items, the stores' upsert `CreateIssue` and a
+  transaction's `CreateIssue` — is refused with the typed
+  `*issueops.IdempotencyExpiredError` (`ErrIdempotencyExpired`; HTTP `410
+  idempotency_expired` with `param` and `closed_at`; `bd create --json`
+  prints `{"error","code":"idempotency_expired","id","closed_at"}` and exits
+  1), `bd import` and the `Importer` role skip the row and report it in
+  `retired_ids` (`bd import --dry-run` previews the same skip), and id
+  generation never mints a retired id. Opt-in: a sweep without it behaves
+  exactly as before, and only a retaining sweep retires — a plain prune or
+  purge, `bd delete` and `bd gc` leave deleted ids reusable. The main-series
+  migration locks older bd binaries, which do not check tombstones, out of a
+  migrated Dolt database, but not a process that was already running when the
+  migration landed, so every writer must run this release before any retaining
+  sweep runs. The new `IDRetention` conformance contract runs on every leg.
 - `bd versions <id>` lists the versions recorded for a bead, and
   `versioned-history.enabled` turns recording on. While it is on, every
   accepted change to a bead created while it is on, or that enters the issues

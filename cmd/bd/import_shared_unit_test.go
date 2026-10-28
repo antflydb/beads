@@ -422,6 +422,75 @@ func TestClassifyDryRunImport(t *testing.T) {
 	})
 }
 
+// retiredImportLookupStore is fakeImportIssueLookupStore with the optional
+// importRetiredLookup seam: retired lists the ids a retaining sweep retired.
+type retiredImportLookupStore struct {
+	fakeImportIssueLookupStore
+	retired map[string]time.Time
+	asked   [][]string
+}
+
+func (f *retiredImportLookupStore) RetiredIssueIDs(_ context.Context, ids []string) (map[string]time.Time, error) {
+	f.asked = append(f.asked, append([]string(nil), ids...))
+	found := map[string]time.Time{}
+	for _, id := range ids {
+		if closedAt, ok := f.retired[id]; ok {
+			found[id] = closedAt
+		}
+	}
+	return found, nil
+}
+
+// TestClassifyDryRunImportReportsRetiredRows pins that a dry run agrees with
+// the real import about a row whose id a retaining sweep retired: the real
+// import skips it and lists it in retired_ids, so the preview must too —
+// never count it as a create.
+func TestClassifyDryRunImportReportsRetiredRows(t *testing.T) {
+	base := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	for _, allowStale := range []bool{false, true} {
+		t.Run(map[bool]string{false: "stale_guarded", true: "allow_stale"}[allowStale], func(t *testing.T) {
+			store := &retiredImportLookupStore{
+				fakeImportIssueLookupStore: fakeImportIssueLookupStore{issues: []*types.Issue{
+					{ID: "bd-live", Title: "live", Status: types.StatusOpen, UpdatedAt: base},
+				}},
+				retired: map[string]time.Time{"bd-retired": base, "bd-live": base},
+			}
+			incoming := []*types.Issue{
+				{ID: "bd-retired", Title: "swept op", Status: types.StatusOpen, UpdatedAt: base},
+				{ID: "bd-new", Title: "brand new", Status: types.StatusOpen, UpdatedAt: base},
+				{ID: "bd-retired", Title: "swept op again", Status: types.StatusOpen, UpdatedAt: base},
+				{ID: "bd-live", Title: "live", Status: types.StatusOpen, UpdatedAt: base},
+			}
+			result, err := classifyDryRunImport(context.Background(), store, incoming, allowStale)
+			if err != nil {
+				t.Fatalf("classifyDryRunImport: %v", err)
+			}
+			if result.Created != 1 || len(result.ImportedIDs) != 1 || result.ImportedIDs[0] != "bd-new" {
+				t.Fatalf("Created = %d, ImportedIDs = %#v; want only bd-new", result.Created, result.ImportedIDs)
+			}
+			if len(result.RetiredIDs) != 1 || result.RetiredIDs[0] != "bd-retired" {
+				t.Fatalf("RetiredIDs = %#v, want [bd-retired] (deduplicated; a live row wins over its tombstone)", result.RetiredIDs)
+			}
+			if got := result.Created + result.Updated + result.Unchanged; got != 2 {
+				t.Fatalf("Created+Updated+Unchanged = %d, want 2: the retired rows are not considered for writing", got)
+			}
+			if len(store.asked) != 1 || len(store.asked[0]) != 2 {
+				t.Fatalf("asked the store about %v; want one read of the two would-create ids", store.asked)
+			}
+		})
+	}
+}
+
+// TestImportDryRunRenderingCountsRetiredRows pins the preview's JSON and text:
+// retired rows ride retired_ids and the text names how many would be skipped.
+func TestImportDryRunRenderingCountsRetiredRows(t *testing.T) {
+	result := importResultJSON{DryRun: true}
+	applyImportDryRunClassification(&result, &ImportResult{Created: 1, ImportedIDs: []string{"bd-new"}, RetiredIDs: []string{"bd-retired"}})
+	if len(result.RetiredIDs) != 1 || result.RetiredIDs[0] != "bd-retired" {
+		t.Fatalf("RetiredIDs = %#v, want [bd-retired]", result.RetiredIDs)
+	}
+}
+
 func TestImportRowChangeSummary(t *testing.T) {
 	local := &types.Issue{
 		Title: "t", Status: types.StatusClosed, Priority: 1,
