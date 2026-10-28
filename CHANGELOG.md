@@ -1062,16 +1062,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pull by bead ID or a pre-linked hydration) read that issue for it at all.
   Issue numbers are only unique within a repository, but the matching keyed
   refs by the bare number of any repository's issue URL. A ref now matches
-  only when it names an issue of the configured host and owner/repo, in
+  only when it names an issue of the configured repository on its host, in
   either the `github.com` web or `api.github.com` REST spelling and without
-  regard to letter case, and the `github:N` shorthand still means the
-  configured repository. `bd github push --dry-run` counts beads linked
-  outside the configured repository as skipped, as a real push does. The
-  trade-off: after a repository rename or transfer, a bead whose
-  `external_ref` names the old owner/repo is no longer matched or pushed,
-  and the next pull imports a new bead for each such issue; point the bead
-  at the new URL first with `bd update <id> --external-ref <url>`
+  regard to letter case, a `www.` prefix, a missing `https://`, an explicit
+  default port or a path below the issue, and the `github:N` shorthand
+  still means the configured repository. A push skips a bead linked outside
+  the configured repository with a warning, and `bd github push --dry-run`
+  counts it as skipped, as a real push does. A renamed or transferred
+  repository keeps syncing with no manual step: GitHub keeps answering its
+  old owner/repo but serves its issues under the new one, so every sync asks
+  GitHub which repository the configured name answers with, and which one
+  each other owner/repo that beads link to on that host answers with. Each
+  name that answers with the configured repository counts as it, whichever
+  name `github.owner` and `github.repo` (or `github.repository`) use, and a
+  pull relinks a bead to its issue's new URL; the host of the repository's
+  own URL counts as its host too, so an API proxy in front of `github.com`
+  syncs. That costs one request per sync, plus one for each other
+  owner/repo the beads link to. An issue transferred to another repository
+  is left alone by pull, push and the conflict check, with a warning
   (#7781, #7794, reported and first fixed by @NahumLitvin).
+- `bd github push` and `bd github sync` on a GitHub Enterprise host whose
+  name does not contain `github.com` no longer take a bead linked to an
+  issue on that host for an unlinked one: a push updates the linked issue
+  instead of creating a second issue and relinking the bead to it. An issue
+  URL now counts as GitHub's when it contains `github.com`, in any letter
+  case, or sits on the host of `github.url` (#7948).
 - `bd list --watch` and `bd show --watch` now wait a full poll interval after
   each refresh, and `bd list --watch --parent` reads its tree in one
   transaction, so other bd commands on an embedded workspace no longer stall

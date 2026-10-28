@@ -358,6 +358,8 @@ func TestPull_SameRepoRespellingsUpdateInPlace(t *testing.T) {
 		{name: "owner and repo in upper case", stored: "https://github.com/ACME/Repo-B/issues/42"},
 		{name: "REST API URL form", stored: "https://api.github.com/repos/acme/repo-b/issues/42"},
 		{name: "github shorthand", stored: "github:42"},
+		{name: "www host", stored: "https://www.github.com/acme/repo-b/issues/42"},
+		{name: "no scheme", stored: "github.com/acme/repo-b/issues/42"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -399,7 +401,8 @@ func TestPull_SameRepoRespellingsUpdateInPlace(t *testing.T) {
 // issue 42 with the content of a bead linked to repo-A's issue 42, nor
 // create an issue for that bead. Its dry-run half covers the preview: the
 // foreign bead counts as skipped, prints no "Would update" line for it, and
-// the preview's counts equal the real push's.
+// the preview's counts equal the real push's. Every run warns that it
+// skipped the bead, rather than exit as though nothing was asked of it.
 func TestPush_SkipsBeadLinkedToOtherRepo(t *testing.T) {
 	bind := func() (*ghFixtureTransport, *ghCrossRepoStore, *tracker.Engine) {
 		rt := &ghFixtureTransport{}
@@ -423,11 +426,21 @@ func TestPush_SkipsBeadLinkedToOtherRepo(t *testing.T) {
 		return rt, store, tracker.NewEngine(newGHTestTracker(rt), store, "test")
 	}
 
+	// A push names a bead it skips as linked outside the configured
+	// repository: in one line for a bulk push, so a database linked to
+	// several repositories is not flooded on every sync.
+	const bulkSkipWarning = "Skipped local issue bd-a42: it is linked outside the configured GitHub repository acme/repo-b"
+
 	t.Run("push", func(t *testing.T) {
 		rt, store, engine := bind()
+		var warnings []string
+		engine.OnWarning = func(msg string) { warnings = append(warnings, msg) }
 		result, err := engine.Sync(context.Background(), tracker.SyncOptions{Push: true})
 		if err != nil {
 			t.Fatalf("Sync: %v", err)
+		}
+		if len(warnings) != 1 || warnings[0] != bulkSkipWarning {
+			t.Errorf("push warnings = %q, want [%q]", warnings, bulkSkipWarning)
 		}
 		if result.PushStats.Updated != 1 || result.PushStats.Skipped != 1 {
 			t.Errorf("push: updated=%d skipped=%d, want updated=1 (repo-B issue 7) skipped=1 (repo-A bead)",
@@ -447,13 +460,43 @@ func TestPush_SkipsBeadLinkedToOtherRepo(t *testing.T) {
 		}
 	})
 
+	t.Run("push by bead id", func(t *testing.T) {
+		rt, store, engine := bind()
+		var warnings []string
+		engine.OnWarning = func(msg string) { warnings = append(warnings, msg) }
+		result, err := engine.Sync(context.Background(), tracker.SyncOptions{Push: true, IssueIDs: []string{"bd-a42"}})
+		if err != nil {
+			t.Fatalf("Sync: %v", err)
+		}
+		if result.PushStats.Updated != 0 || result.PushStats.Skipped != 1 {
+			t.Errorf("push of bd-a42: updated=%d skipped=%d, want updated=0 skipped=1",
+				result.PushStats.Updated, result.PushStats.Skipped)
+		}
+		want := "Local issue bd-a42 is linked outside the configured GitHub repository acme/repo-b, skipping push"
+		if len(warnings) != 1 || warnings[0] != want {
+			t.Errorf("push of bd-a42 warnings = %q, want [%q]", warnings, want)
+		}
+		for _, req := range rt.requestLog() {
+			if strings.HasPrefix(req, "POST ") || strings.HasPrefix(req, "PATCH ") {
+				t.Errorf("push of bd-a42 sent %q", req)
+			}
+		}
+		if a := store.issues["bd-a42"]; a.ExternalRef == nil || *a.ExternalRef != repoAIssue42Ref {
+			t.Errorf("repo-A bead external_ref = %v, want unchanged", ghDerefRef(a.ExternalRef))
+		}
+	})
+
 	t.Run("dry run", func(t *testing.T) {
 		rt, _, engine := bind()
-		var messages []string
+		var messages, warnings []string
 		engine.OnMessage = func(msg string) { messages = append(messages, msg) }
+		engine.OnWarning = func(msg string) { warnings = append(warnings, msg) }
 		dry, err := engine.Sync(context.Background(), tracker.SyncOptions{Push: true, DryRun: true})
 		if err != nil {
 			t.Fatalf("dry-run Sync: %v", err)
+		}
+		if len(warnings) != 1 || warnings[0] != bulkSkipWarning {
+			t.Errorf("dry-run warnings = %q, want the real push's [%q]", warnings, bulkSkipWarning)
 		}
 		var wantUpdate, foreignUpdate bool
 		for _, m := range messages {
@@ -498,8 +541,17 @@ func TestSync_NoConflictWithBeadLinkedToOtherRepo(t *testing.T) {
 	rt := &ghFixtureTransport{}
 	rt.route(http.MethodGet, "/repos/acme/repo-b/issues",
 		"["+ghIssueJSON(9001, 42, "Repo B issue 42 (remote)", "Repo B body", repoBIssue42Ref)+"]")
+	// Served, so a conflict check that read repo-B's issue 42 for the repo-A
+	// bead would see it changed since last_sync and report the conflict
+	// rather than shrug off a 404; both routes must never be requested.
+	rt.route(http.MethodGet, "/repos/acme/repo-b/issues/42",
+		ghIssueJSON(9001, 42, "Repo B issue 42 (remote)", "Repo B body", repoBIssue42Ref))
 	rt.route(http.MethodPatch, "/repos/acme/repo-b/issues/42",
-		ghIssueJSON(9001, 42, "Repo B issue 42 (remote)", "Repo B body", repoBIssue42Ref)) // must never be requested
+		ghIssueJSON(9001, 42, "Repo B issue 42 (remote)", "Repo B body", repoBIssue42Ref))
+	// Both repositories answer, so the sync asks GitHub about acme/repo-a
+	// and must not take it for another name of acme/repo-b.
+	rt.route(http.MethodGet, "/repos/acme/repo-b", ghRepositoryJSON(7200, "acme/repo-b", "https://github.com/acme/repo-b"))
+	rt.route(http.MethodGet, "/repos/acme/repo-a", ghRepositoryJSON(7201, "acme/repo-a", "https://github.com/acme/repo-a"))
 	store := newGHCrossRepoStore(newRepoBead("bd-a42", "Repo A issue 42", repoAIssue42Ref))
 	// last_sync T0; repo-B issue 42 updated at T0+24h (ghIssueJSON); the
 	// repo-A bead edited at T0+48h (newRepoBead): both sides changed since.
@@ -513,8 +565,14 @@ func TestSync_NoConflictWithBeadLinkedToOtherRepo(t *testing.T) {
 	if result.Stats.Conflicts != 0 {
 		t.Errorf("sync reported %d conflicts for a bead linked to another repository", result.Stats.Conflicts)
 	}
+	if rt.seen(http.MethodGet, "/repos/acme/repo-b/issues/42") {
+		t.Errorf("sync read repo-B issue 42 for the repo-A bead")
+	}
 	if rt.seen(http.MethodPatch, "/repos/acme/repo-b/issues/42") {
 		t.Errorf("sync wrote repo-B issue 42 with repo-A bead content")
+	}
+	if !rt.seen(http.MethodGet, "/repos/acme/repo-a") {
+		t.Errorf("sync never asked GitHub about acme/repo-a: %q", rt.requestLog())
 	}
 	a := store.issues["bd-a42"]
 	if a.Title != "Repo A issue 42" || a.Description != "Repo A issue 42 (local)" ||
