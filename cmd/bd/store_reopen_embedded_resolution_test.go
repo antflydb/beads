@@ -101,37 +101,62 @@ func TestResolveCommandBeadsDir_SymlinkedBeadsDirTrapAncestor(t *testing.T) {
 	}
 	t.Chdir(project)
 
-	// AC-1: the full chain PersistentPreRun uses — FindDatabasePath resolves
-	// the symlinked .beads on the spot and hands resolveCommandBeadsDir the
-	// canonical <target>/embeddeddolt. Reverse mapping must return the
-	// workspace, not walk past it to the trap ancestor.
-	dbPath := beads.FindDatabasePath()
-	if dbPath == "" {
-		t.Fatalf("FindDatabasePath() = \"\", want the symlinked workspace's embeddeddolt")
+	// AC-1: both discovery routes without --db. Each must canonicalize the
+	// symlinked .beads to <target>/embeddeddolt, and reverse mapping must
+	// return the workspace spelled as its physical directory (the spelling
+	// the workspace gate accepts), not walk past it to the trap ancestor.
+	found := beads.FindBeadsDir()
+	if !utils.PathsEqual(found, target) {
+		t.Fatalf("FindBeadsDir() = %q, want the symlinked .beads %q", found, symlink)
 	}
-	got := resolveCommandBeadsDir(dbPath)
-	if utils.PathsEqual(got, trap) {
-		t.Errorf("resolveCommandBeadsDir(FindDatabasePath() = %q) = %q, walked past the symlinked .beads to the trap ancestor %q", dbPath, got, trap)
-	}
-	if !utils.PathsEqual(got, target) {
-		t.Errorf("resolveCommandBeadsDir(FindDatabasePath() = %q) = %q, want workspace %q", dbPath, got, target)
-	}
-
-	// AC-2: the reporter's explicit --db spellings. The real target
-	// directory worked at 1.1.0 while the .beads symlink path and
-	// <target>/embeddeddolt did not; at base all three must resolve to the
-	// same workspace, none to the trap.
-	for name, explicit := range map[string]string{
-		"real target dir":     target,
-		".beads symlink path": symlink,
-		"embeddeddolt dir":    filepath.Join(target, "embeddeddolt"),
+	wantDB := filepath.Join(target, "embeddeddolt")
+	for _, route := range []struct{ name, beadsDir string }{
+		// The public API's tree walk, as extensions call FindDatabasePath.
+		{"tree walk", ""},
+		// The CLI: PersistentPreRunE exports FindBeadsDir's result as
+		// BEADS_DIR (prepareSelectedCommandContext) before it calls
+		// FindDatabasePath, which then takes the BEADS_DIR branch.
+		{"PersistentPreRunE", found},
 	} {
-		got := resolveCommandBeadsDir(explicit)
-		if utils.PathsEqual(got, trap) {
-			t.Errorf("resolveCommandBeadsDir(%s = %q) = %q, walked past the symlinked .beads to the trap ancestor %q", name, explicit, got, trap)
+		t.Setenv("BEADS_DIR", route.beadsDir)
+		dbPath := beads.FindDatabasePath()
+		if dbPath != wantDB {
+			t.Errorf("%s: FindDatabasePath() with BEADS_DIR=%q = %q, want %q", route.name, route.beadsDir, dbPath, wantDB)
+			continue
 		}
-		if !utils.PathsEqual(got, target) {
-			t.Errorf("resolveCommandBeadsDir(%s = %q) = %q, want workspace %q", name, explicit, got, target)
+		got := resolveCommandBeadsDir(dbPath)
+		if utils.PathsEqual(got, trap) {
+			t.Errorf("%s: resolveCommandBeadsDir(%q) = %q, walked past the symlinked .beads to the trap ancestor %q", route.name, dbPath, got, trap)
+		} else if got != target {
+			t.Errorf("%s: resolveCommandBeadsDir(%q) = %q, want workspace %q", route.name, dbPath, got, target)
+		}
+	}
+	t.Setenv("BEADS_DIR", "")
+
+	// AC-2: the reporter's explicit --db spellings. None may resolve to the
+	// trap, and all must select the target workspace. Only the
+	// <target>/embeddeddolt spelling pins PR #4575: the real target
+	// directory and the .beads symlink path match resolveBeadsDirForDBPath's
+	// self-equality check, which predates that fix, so they pass without it.
+	// The .beads symlink path also comes back as spelled, and the workspace
+	// gate refuses a symlinked directory, so a command given that spelling
+	// runs ungated. That is a gate defect this test does not cover, so only
+	// the other two spellings must come back as the physical directory.
+	for _, tc := range []struct {
+		name, explicit string
+		physical       bool // got must be target's exact spelling
+	}{
+		{"real target dir", target, true},
+		{".beads symlink path", symlink, false},
+		{"embeddeddolt dir", filepath.Join(target, "embeddeddolt"), true},
+	} {
+		got := resolveCommandBeadsDir(tc.explicit)
+		if utils.PathsEqual(got, trap) {
+			t.Errorf("resolveCommandBeadsDir(%s = %q) = %q, walked past the symlinked .beads to the trap ancestor %q", tc.name, tc.explicit, got, trap)
+		} else if !utils.PathsEqual(got, target) {
+			t.Errorf("resolveCommandBeadsDir(%s = %q) = %q, want workspace %q", tc.name, tc.explicit, got, target)
+		} else if tc.physical && got != target {
+			t.Errorf("resolveCommandBeadsDir(%s = %q) = %q, want the physical spelling %q", tc.name, tc.explicit, got, target)
 		}
 	}
 }
