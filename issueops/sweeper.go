@@ -187,6 +187,19 @@ type SweepRequest struct {
 	// is clone-local like the wisps table. A store that loses its clone-local
 	// tables loses those tombstones with the rows.
 	//
+	// ITS LOCK FOOTPRINT IS ITS SIZE. To order itself against a racing create
+	// of an id it retires, a retaining sweep takes, before it deletes, the
+	// create-coordination cell of every id it will retire. Cells are 4096
+	// shards of the id space, shared by unrelated ids, so a sweep of N rows
+	// holds about 4096·(1-e^(-N/4096)) of them until it commits: about 22% of
+	// all shards at N = 1000, about 2.4% at N = 100. Every create, upsert and
+	// import of an explicit id in one of those shards meets the sweep: on
+	// Postgres it waits for the sweep's commit; on a Dolt sql-server, where
+	// there is no lock wait, whichever commits second conflicts and replays
+	// (the stores' sweepers replay a sweep that lost; a large sweep under
+	// heavy create traffic can lose repeatedly). Size Limit to keep the
+	// footprint small — around 100 rows per call — and loop on Remaining.
+	//
 	// A dry run writes no tombstone. A backend that cannot retain ids refuses
 	// the request with *ErrUnsupported rather than sweeping without them.
 	RetainIDs bool

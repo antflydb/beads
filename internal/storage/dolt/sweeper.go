@@ -66,7 +66,14 @@ func (s *sweeper) Sweep(ctx context.Context, req issueops.SweepRequest) (issueop
 		return result, nil
 	}
 
-	if err := s.store.withWriteTx(ctx, func(tx *sql.Tx) error {
+	// withRetryTx, like the deleter: a sweep that loses Dolt's commit-time
+	// merge (1213/1205, or the exact 1105 autocommit rollback) never landed,
+	// so the whole body replays — candidates re-read, result re-derived. A
+	// retaining sweep needs it most: it writes one coordination cell per
+	// shard it retires (see issueops.Sweeper on the lock footprint), and a
+	// create committing in any of those shards first conflicts it.
+	if err := s.store.withRetryTx(ctx, func(tx *sql.Tx) error {
+		result = issueops.SweepResult{}
 		if err := run(tx); err != nil {
 			return err
 		}
@@ -76,7 +83,7 @@ func (s *sweeper) Sweep(ctx context.Context, req issueops.SweepRequest) (issueop
 		// Through the same funnel the deleter uses. A sweep mints nothing today
 		// — SweepInTx deletes through DeleteIssuesInTx, which rewrites no
 		// neighbor, so there is no surviving row to version — but it shares
-		// this table list and the minting-scoped withWriteTx with the deleter,
+		// this table list and the minting-scoped write transaction with the deleter,
 		// and a staging list that carries the version tables on one and not the
 		// other is the asymmetry the wisp-arm scope comment refused: inert
 		// today, and silently wrong the day a sweep gains a surviving-row write.
