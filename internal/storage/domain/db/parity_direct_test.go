@@ -296,8 +296,13 @@ func (s *testSuite) TestParityReadyBlockedDescendants() {
 // plantStaleBlocked sets is_blocked = 1 on issue rows directly, the state an
 // outside merge or a failed post-pull recompute can leave (GH#3268).
 func (s *testSuite) plantStaleBlocked(ids ...string) {
+	s.plantStaleBlockedIn("issues", ids...)
+}
+
+// plantStaleBlockedIn plants the flag on rows of table (issues or wisps).
+func (s *testSuite) plantStaleBlockedIn(table string, ids ...string) {
 	for _, id := range ids {
-		res, err := s.Runner().ExecContext(s.Ctx(), "UPDATE issues SET is_blocked = 1 WHERE id = ?", id)
+		res, err := s.Runner().ExecContext(s.Ctx(), "UPDATE "+table+" SET is_blocked = 1 WHERE id = ?", id)
 		s.Require().NoError(err)
 		n, err := res.RowsAffected()
 		s.Require().NoError(err)
@@ -306,8 +311,10 @@ func (s *testSuite) plantStaleBlocked(ids ...string) {
 }
 
 // readyOnBothStacks reads ready work through the direct stack, the domain
-// stack and the domain counts path, requires all three to agree, and returns
-// the ids.
+// stack and both stacks' counts paths, requires them all to agree, and
+// returns the ids. The direct counts path resolves the stale-flagged rows
+// through its ready probe rather than per read, so it is read here too, with
+// the total it sizes in the same transaction and the separate count.
 func (s *testSuite) readyOnBothStacks(label string) []string {
 	classic := idsOf(s.classicReady(types.WorkFilter{}))
 	dom := idsOf(s.domainReady(types.WorkFilter{}).Items)
@@ -315,6 +322,18 @@ func (s *testSuite) readyOnBothStacks(label string) []string {
 	counts, err := s.issueRepo().GetReadyWorkWithCounts(s.Ctx(), types.WorkFilter{})
 	s.Require().NoError(err)
 	s.ElementsMatch(dom, iwcIDs(counts), "%s: domain ready counts must list the same rows", label)
+
+	tx := s.beginClassicTx()
+	defer func() { _ = tx.Rollback() }()
+	direct, err := issueops.GetReadyWorkWithCountsInTx(s.Ctx(), tx, types.WorkFilter{})
+	s.Require().NoError(err)
+	s.ElementsMatch(dom, idsOfCounts(direct), "%s: direct ready counts must list the same rows", label)
+	_, total, err := issueops.GetReadyWorkWithCountsAndTotalInTx(s.Ctx(), tx, types.WorkFilter{Limit: 1})
+	s.Require().NoError(err)
+	s.Equal(len(dom), total, "%s: the direct in-band total must size the same set", label)
+	n, err := issueops.CountReadyWorkInTx(s.Ctx(), tx, types.WorkFilter{})
+	s.Require().NoError(err)
+	s.Equal(len(dom), n, "%s: the direct ready count must size the same set", label)
 	return dom
 }
 
@@ -391,6 +410,30 @@ func (s *testSuite) TestParityReadyRealBlockersStayHidden() {
 		s.NotContains(ready, id, "%s is really blocked and must stay out of ready work", id)
 	}
 	s.ElementsMatch([]string{"bd-par-real-d", "bd-par-real-s", "bd-par-real-k"}, ready)
+}
+
+// Case 4f (GH#3268): the wisps family reads around a stale flag too. A
+// wisps-table row with is_blocked = 1 and no wisp_dependencies row of its own
+// is ready on every path, the direct stack's wisp page filter included, while
+// a wisp the recompute flagged through a real edge stays hidden.
+func (s *testSuite) TestParityReadyStaleFlagOnWispRow() {
+	base := s.parityBase()
+	for n, id := range []string{"bd-par-wst-a", "bd-par-wst-b", "bd-par-wst-x"} {
+		minute := n
+		s.seedParityIssue(id, func(i *types.Issue) {
+			i.CreatedAt = base.Add(time.Duration(minute) * time.Minute)
+		}, true)
+	}
+	s.classicAddDep("bd-par-wst-b", "bd-par-wst-x", types.DepBlocks)
+	var blocked bool
+	s.Require().NoError(s.Runner().QueryRowContext(s.Ctx(),
+		"SELECT is_blocked FROM wisps WHERE id = ?", "bd-par-wst-b").Scan(&blocked))
+	s.Require().True(blocked, "the recompute must set is_blocked on the wisp from its real edge")
+	s.plantStaleBlockedIn("wisps", "bd-par-wst-a")
+
+	ready := s.readyOnBothStacks("stale flag on a wisp row")
+	s.ElementsMatch([]string{"bd-par-wst-a", "bd-par-wst-x"}, ready,
+		"an edgeless wisp with a stale is_blocked flag is ready work; a really blocked one is not")
 }
 
 // Case 5: ready limit boundary — membership parity at the cut, and the domain

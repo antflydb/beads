@@ -690,7 +690,7 @@ func TestEmbeddedReadyStaleBlockedFlagOnEdgelessIssue(t *testing.T) {
 // TestEmbeddedReadyEmptyStateMessage pins plain `bd ready`'s empty state: the
 // "all issues have blocking dependencies" claim used to print whenever any
 // issue was open or in progress, though nothing was blocked (GH#3268). It is
-// now made only when bd blocked names a blocked issue for the same filter;
+// now made only when bd blocked lists an issue the listing would show;
 // otherwise the message points at bd list and at the stale-flag repair.
 func TestEmbeddedReadyEmptyStateMessage(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
@@ -730,7 +730,10 @@ func TestEmbeddedReadyEmptyStateMessage(t *testing.T) {
 
 // TestEmbeddedReadyEmptyStateRealBlocker pins that a workspace whose only
 // open issue is blocked by an in-progress one keeps the exact blocking-claim
-// line (GH#3268): bd blocked lists the issue, so the claim is true.
+// line (GH#3268): bd blocked lists the issue, so the claim is true. It also
+// pins that the claim follows the listing: a row cap does not hide the blocked
+// issues from it, and a blocked issue the listing would not show anyway
+// (another assignee's, a deferred one) does not support it.
 func TestEmbeddedReadyEmptyStateRealBlocker(t *testing.T) {
 	if os.Getenv("BEADS_TEST_EMBEDDED_DOLT") != "1" {
 		t.Skip("set BEADS_TEST_EMBEDDED_DOLT=1 to run embedded dolt integration tests")
@@ -744,11 +747,54 @@ func TestEmbeddedReadyEmptyStateRealBlocker(t *testing.T) {
 	bdRunOK(t, bd, dir, "dep", "add", blocked.ID, blocker.ID)
 	bdRunOK(t, bd, dir, "update", blocker.ID, "--status", "in_progress")
 
+	const (
+		claimLine   = "No ready work found (all issues have blocking dependencies)"
+		noneBlocked = "Nothing bd ready would list is blocked by an open dependency"
+	)
 	out := bdRunOK(t, bd, dir, "ready")
-	if !strings.Contains(out, "No ready work found (all issues have blocking dependencies)") {
+	if !strings.Contains(out, claimLine) {
 		t.Errorf("expected the exact blocking-claim line:\n%s", out)
 	}
 	if strings.Contains(out, "bd recompute-blocked") {
 		t.Errorf("a real blocker must not get the stale-flag hint:\n%s", out)
 	}
+
+	// The blocked read used to take the listing's row cap: with more blocked
+	// issues than the cap it was refused, and the empty state then said that
+	// nothing was blocked.
+	t.Run("row_cap_below_the_blocked_count", func(t *testing.T) {
+		for _, title := range []string{"Second blocked issue", "Third blocked issue"} {
+			more := bdCreate(t, bd, dir, title, "--type", "task")
+			bdRunOK(t, bd, dir, "dep", "add", more.ID, blocker.ID)
+		}
+		if out := bdRunOK(t, bd, dir, "ready", "--max-rows", "2"); !strings.Contains(out, claimLine) {
+			t.Errorf("bd ready --max-rows 2 over three blocked issues lost the blocking claim:\n%s", out)
+		}
+	})
+
+	// Only an issue the listing would show supports the claim. Every blocked
+	// issue here is unassigned, and alice's one issue is in progress.
+	t.Run("another_assignees_blocked_issues", func(t *testing.T) {
+		bdRunOK(t, bd, dir, "update", blocker.ID, "--assignee", "alice")
+		out := bdRunOK(t, bd, dir, "ready", "--assignee", "alice")
+		if strings.Contains(out, claimLine) {
+			t.Errorf("alice has no blocked issue, yet the listing claims blocking dependencies:\n%s", out)
+		}
+		if !strings.Contains(out, noneBlocked) {
+			t.Errorf("expected %q:\n%s", noneBlocked, out)
+		}
+	})
+
+	// A deferred issue is out of the listing whatever its blockers.
+	t.Run("deferred_blocked_issue", func(t *testing.T) {
+		later := bdCreate(t, bd, dir, "Deferred and blocked", "--type", "task", "--label", "rb-later", "--defer", "+24h")
+		bdRunOK(t, bd, dir, "dep", "add", later.ID, blocker.ID)
+		out := bdRunOK(t, bd, dir, "ready", "--label", "rb-later")
+		if strings.Contains(out, claimLine) {
+			t.Errorf("the only blocked issue in scope is deferred, yet the listing claims blocking dependencies:\n%s", out)
+		}
+		if !strings.Contains(out, noneBlocked) {
+			t.Errorf("expected %q:\n%s", noneBlocked, out)
+		}
+	})
 }

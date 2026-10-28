@@ -666,6 +666,24 @@ func TestProxiedServerReady2(t *testing.T) {
 		if strings.Contains(stdout, "bd recompute-blocked") {
 			t.Errorf("a real blocker must not get the stale-flag hint, got: %s", stdout)
 		}
+
+		// With one ready issue, --offset 1 is a page past the last one: the
+		// blocked issue above must not make it claim blocking dependencies
+		// while the first page lists ready work.
+		bdProxiedCreate(t, bd, p.dir, "Unblocked open issue")
+		stdout, _ = bdProxiedReadyCapture(t, bd, p)
+		if !strings.Contains(stdout, "Unblocked open issue") {
+			t.Fatalf("expected the first page to list the unblocked issue, got: %s", stdout)
+		}
+		stdout, _ = bdProxiedReadyCapture(t, bd, p, "--offset", "1")
+		if !strings.Contains(stdout, "No ready work at offset 1") {
+			t.Errorf("expected the --offset empty-page line, got: %s", stdout)
+		}
+		for _, claim := range []string{"all issues have blocking dependencies", "Nothing bd ready would list is blocked"} {
+			if strings.Contains(stdout, claim) {
+				t.Errorf("a page past the last ready issue must not judge blockers (%q), got: %s", claim, stdout)
+			}
+		}
 	})
 
 	t.Run("include_ephemeral_surfaces_wisps", func(t *testing.T) {

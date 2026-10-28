@@ -139,13 +139,7 @@ func runReadyProxiedList(ctx context.Context, uw uow.UnitOfWork, in readyInput) 
 	maybeShowUpgradeNotification()
 
 	if len(issues) == 0 {
-		hasOpenIssues := false
-		if stats, statsErr := uw.IssueUseCase().GetStatistics(ctx); statsErr == nil {
-			hasOpenIssues = stats.OpenIssues > 0 || stats.InProgressIssues > 0
-		}
-		printReadyEmptyState(hasOpenIssues, func() ([]*types.BlockedIssue, error) {
-			return uw.IssueUseCase().GetBlockedIssues(ctx, in.filter)
-		})
+		printReadyEmptyState(ctx, in, uw.IssueUseCase())
 		return nil
 	}
 
