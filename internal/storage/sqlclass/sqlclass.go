@@ -44,10 +44,11 @@ func (k Kind) String() string {
 // (WITH [RECURSIVE] name(cols) AS (...)), comments, and string literals that
 // contain keywords do not affect the result. A read that calls a dolt_
 // function outside readOnlyDoltFunctions anywhere in its parsed tree is
-// Mixed, because Dolt can expose a write (DOLT_COMMIT, DOLT_RESET, ...) as a
-// SELECT-callable function. Input
-// the parser rejects is Mixed: it may still be valid for the server, and
-// Mixed never discards rows or rolls back writes.
+// Mixed: the servers bd supports expose Dolt's writes (DOLT_COMMIT,
+// DOLT_RESET, ...) only as procedures, but a server that exposed one as a
+// function would run the write from a SELECT. Input the parser rejects is
+// Mixed: it may still be valid for the server, and Mixed never discards rows
+// or rolls back writes.
 func Classify(query string) Kind {
 	stmt, err := sqlparser.Parse(query)
 	if err != nil || stmt == nil {
@@ -79,13 +80,30 @@ var readOnlyDoltFunctions = map[string]bool{
 // do not match.
 func callsDoltWriteFunction(stmt sqlparser.Statement) bool {
 	found := false
-	_ = sqlparser.Walk(func(node sqlparser.SQLNode) (bool, error) {
-		if fn, ok := node.(*sqlparser.FuncExpr); ok && isDoltWriteFunction(fn.Name.Lowered()) {
-			found = true
-			return false, nil
+	var visit sqlparser.Visit
+	visit = func(node sqlparser.SQLNode) (bool, error) {
+		switch n := node.(type) {
+		case *sqlparser.FuncExpr:
+			if isDoltWriteFunction(n.Name.Lowered()) {
+				found = true
+			}
+		// sqlparser.Walk skips some clauses that can hold a call, so walk
+		// them here. Among them are a set operation's own WITH, ORDER BY and
+		// LIMIT and a SELECT's named WINDOW clause.
+		case *sqlparser.SetOp:
+			_ = sqlparser.Walk(visit, n.With, n.OrderBy, n.Limit)
+		case *sqlparser.Select:
+			_ = sqlparser.Walk(visit, n.Window)
+		// SubstrExpr.walkSubtree returns before FROM and FOR when the string
+		// is a literal: SUBSTRING('abc' FROM f() FOR g()).
+		case *sqlparser.SubstrExpr:
+			if n.Name == nil {
+				_ = sqlparser.Walk(visit, n.From, n.To)
+			}
 		}
 		return !found, nil
-	}, stmt)
+	}
+	_ = sqlparser.Walk(visit, stmt)
 	return found
 }
 
