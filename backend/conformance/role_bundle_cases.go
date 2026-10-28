@@ -385,6 +385,7 @@ var roleContractCases = []roleContract{
 		RunIDRetentionRefusesANoHistoryRecreateThroughEveryDoor,
 		RunIDRetentionAWispsPlaneRetainingSweepRetiresItsRows,
 		RunIDRetentionAPlainSweepSkipsARetainedType,
+		RunIDRetentionARetainedTypeIsHeldBackBeforeTheProtectionsAndTheLimit,
 		RunIDRetentionARetainedTypeReadErrorFailsTheSweep,
 	),
 
