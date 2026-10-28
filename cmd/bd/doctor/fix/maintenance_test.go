@@ -52,3 +52,26 @@ func TestSelectStaleClosedHoldsBackRetainedTypes(t *testing.T) {
 		t.Errorf("selectStaleClosed(unset) = %v, %d pinned, %d retained; want 2 deletable, 1, 0", deletable, skippedPinned, retained)
 	}
 }
+
+// TestSelectPatrolPollutionHoldsBackRetainedTypes pins the Patrol Pollution
+// fix's selection: it picks beads by title pattern and deletes them row by row
+// with no tombstone, so a bead of a type types.retained names is held back and
+// counted, whatever its title; an unset setting holds nothing back.
+func TestSelectPatrolPollutionHoldsBackRetainedTypes(t *testing.T) {
+	digest := &types.Issue{ID: "bd-digest", Title: "Digest: mol-x-patrol", IssueType: types.TypeTask}
+	session := &types.Issue{ID: "bd-session", Title: "Session ended: x", IssueType: types.TypeTask}
+	keyed := &types.Issue{ID: "bd-op", Title: "Session ended: y", IssueType: types.IssueType("op")}
+	other := &types.Issue{ID: "bd-other", Title: "real work", IssueType: types.TypeTask}
+	keyedWork := &types.Issue{ID: "bd-op2", Title: "real keyed work", IssueType: types.IssueType("op")}
+	issues := []*types.Issue{digest, session, keyed, other, keyedWork}
+
+	sel := selectPatrolPollution(issues, "op")
+	if len(sel.ids) != 2 || sel.ids[0] != "bd-digest" || sel.ids[1] != "bd-session" ||
+		sel.digests != 1 || sel.sessions != 1 || sel.retained != 1 {
+		t.Errorf("selectPatrolPollution(op retained) = %+v; want [bd-digest bd-session], 1 digest, 1 session, 1 retained", sel)
+	}
+	sel = selectPatrolPollution(issues, "")
+	if len(sel.ids) != 3 || sel.sessions != 2 || sel.retained != 0 {
+		t.Errorf("selectPatrolPollution(unset) = %+v; want 3 ids, 2 sessions, 0 retained", sel)
+	}
+}

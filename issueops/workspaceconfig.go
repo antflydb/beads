@@ -28,8 +28,9 @@ const (
 // names, in the JSON-array or comma-separated form types.custom takes. A
 // sweep without RetainIDs holds every closed row of a listed type back and
 // counts it in SweepSkips.RetentionRequired; the bulk deletes outside the
-// role — `bd gc`'s decay, `bd admin cleanup`, `bd mol wisp gc` and the
-// stale-closed-issues doctor fix — hold them back too. A write of a malformed
+// role that select by their own rule — `bd gc`'s decay, `bd admin cleanup`,
+// `bd mol wisp gc`, the doctor's stale-closed and pollution deletes, and `bd
+// migrate-personal` — hold them back too. A write of a malformed
 // value is refused (workapi.ValidateRetainedTypesValue).
 //
 // Unknown type names are accepted and match nothing, so an orchestrator can

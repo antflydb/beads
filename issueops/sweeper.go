@@ -179,7 +179,8 @@ type SweepRequest struct {
 	// `bd purge`, whose durable tier also selects no-history rows), the
 	// Deleter role (`bd delete`, and the bulk commands that delete through
 	// it: `bd admin cleanup`, `bd mol wisp gc`, `bd mol burn`), `bd gc`'s
-	// decay, the stale-closed-issues `bd doctor --fix`, and raw SQL.
+	// decay, the doctor's fixes and cleans, `bd migrate-personal`, `bd mol
+	// squash`, `bd repo remove`, and raw SQL.
 	//
 	// A WORKSPACE KEEPS ITS KEYED ROWS OUT OF THE PLAIN SWEEPS by naming their
 	// issue types in the SettingKeyTypesRetained setting: a sweep without
@@ -187,12 +188,17 @@ type SweepRequest struct {
 	// (SweepSkips.RetentionRequired). The bulk deletes that select rows by
 	// their own rule hold them back too — `bd gc`'s decay, `bd admin cleanup`
 	// (which also refuses --cascade while the setting names a type), `bd mol
-	// wisp gc` and the stale-closed-issues doctor fix. With this flag set the
-	// setting holds nothing back, so the retaining sweep is the one bulk door
-	// those rows may leave by. What remains is deliberate and per id: the
-	// Deleter role does not consult the setting (`bd delete` deletes the ids
-	// it names, `bd mol burn` the molecule it names), and raw SQL bypasses
-	// every role. A caller whose ids are keys keeps those out by its own rule.
+	// wisp gc`, the stale-closed-issues and Patrol Pollution `bd doctor
+	// --fix`, `bd doctor --check=pollution --clean`, and `bd migrate-personal`.
+	// With this flag set the setting holds nothing back, so the retaining
+	// sweep is the one door that SELECTS those rows and deletes them. What
+	// remains does not select; it deletes what its caller names, without
+	// consulting the setting: the Deleter role (`bd delete` the ids it names,
+	// `bd mol burn` the molecule it names), `bd mol squash` (the named
+	// molecule's ephemeral children), `bd cook --force` (the proto it
+	// replaces), `bd repo remove` (the rows hydrated from the repo it names),
+	// and raw SQL, which bypasses every role. A caller whose ids are keys
+	// keeps those out by its own rule.
 	//
 	// A tombstone is exactly as durable as the row it replaces: a durable
 	// row's tombstone is versioned and replicates with it, a wisps-plane row's

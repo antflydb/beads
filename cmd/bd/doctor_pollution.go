@@ -9,6 +9,8 @@ import (
 	"github.com/steveyegge/beads/internal/remedy"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
+	"github.com/steveyegge/beads/internal/workapi"
+	"github.com/steveyegge/beads/issueops"
 )
 
 // runPollutionCheck runs detailed test pollution detection
@@ -112,6 +114,24 @@ func runPollutionCheck(_ string, clean bool, yes bool) error {
 		return nil
 	}
 
+	// The retained types are read from the workspace database the deletes go
+	// to, and a read error fails the clean: it deletes row by row with no
+	// tombstone, so deleting on a guess could take a bead whose id must be
+	// retired.
+	warnIgnoredYAMLRetainedTypes()
+	retainedSetting, err := store.GetConfig(ctx, issueops.SettingKeyTypesRetained)
+	if err != nil {
+		return HandleError("reading %s: %v", issueops.SettingKeyTypesRetained, err)
+	}
+	polluted, retained := selectPollutionDeletable(polluted, retainedSetting)
+	if retained > 0 {
+		fmt.Println(retainedTypesKeptLine(retained, "test issue(s)"))
+	}
+	if len(polluted) == 0 {
+		fmt.Println("Nothing to delete.")
+		return nil
+	}
+
 	if !yes {
 		fmt.Printf("\nDelete %d test issues? [y/N] ", len(polluted))
 		var response string
@@ -152,4 +172,26 @@ func init() {
 	doctorCmd.Flags().StringVar(&doctorCheckFlag, "check", "", "Run specific check in detail (e.g., 'pollution')")
 	doctorCmd.Flags().BoolVar(&doctorClean, "clean", false, "For pollution check: delete detected test issues")
 	doctorCmd.Flags().BoolVar(&doctorDeep, "deep", false, "Validate full graph integrity")
+}
+
+// selectPollutionDeletable holds back the detected test issues of a type the
+// workspace retains (retainedSetting is the stored value of types.retained)
+// and counts them. The pollution heuristic ranges over the whole workspace
+// and the clean deletes with no tombstone, so a retained bead's id — an
+// idempotency key — is never its to free.
+func selectPollutionDeletable(polluted []pollutionResult, retainedSetting string) ([]pollutionResult, int) {
+	retainedTypes := workapi.RetainedTypesFromSetting(retainedSetting)
+	if len(retainedTypes) == 0 {
+		return polluted, 0
+	}
+	deletable := make([]pollutionResult, 0, len(polluted))
+	retained := 0
+	for _, p := range polluted {
+		if retainedTypes[string(p.issue.IssueType)] {
+			retained++
+			continue
+		}
+		deletable = append(deletable, p)
+	}
+	return deletable, retained
 }

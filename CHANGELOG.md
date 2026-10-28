@@ -83,8 +83,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deletes outside the sweep keep those beads too and report
   `retention_required`: `bd admin cleanup` (which refuses `--cascade` while
   the setting names a type), `bd mol wisp gc` in every mode, and the
-  stale-closed-issues `bd doctor --fix`. `bd delete` and `bd mol burn`, which
-  delete the ids or molecule they name, do not consult it.
+  stale-closed-issues `bd doctor --fix`; the Patrol Pollution `bd doctor
+  --fix`, `bd doctor --check=pollution --clean` and `bd migrate-personal`
+  keep them and say how many. The commands that delete only what they are
+  named do not consult it: `bd delete`, `bd mol burn`, `bd mol squash`,
+  `bd cook --force` and `bd repo remove`.
 - `bd versions <id>` lists the versions recorded for a bead, and
   `versioned-history.enabled` turns recording on. While it is on, every
   accepted change to a bead created while it is on, or that enters the issues

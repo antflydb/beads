@@ -100,13 +100,15 @@ This applies to `bd prune`, `bd purge` (including `--wisps-plane`), their
 `--dry-run` previews, and the decay phase of `bd gc`. The other bulk deletes
 keep those beads too and report the same count: `bd admin cleanup` (which also
 refuses `--cascade` while the setting names a type), `bd mol wisp gc` in every
-mode, and the stale-closed-issues `bd doctor --fix`. A sweep with
-`--retain-ids` keeps nothing back: it deletes those beads and retires their
-ids, which is the only bulk way they leave.
+mode, the stale-closed-issues and Patrol Pollution `bd doctor --fix`,
+`bd doctor --check=pollution --clean`, and `bd migrate-personal` (which leaves
+those beads in the project database). A sweep with `--retain-ids` keeps nothing
+back: it deletes those beads and retires their ids, and it is the only command
+that selects them for deletion.
 
 The setting takes a comma-separated list or a JSON array. Names need not be
 registered types yet; a name no bead carries matches nothing. Because the
-setting is a safety rule, `bd config set` refuses a value that would protect
+setting is a safety rule, `bd config set` (and `bd config set-many`) refuses a value that would protect
 nothing by accident: a bracketed list that is not JSON (`[op]`), a name with a
 space, quote, bracket or comma in it (`"op"`, `op fact`), and an alias of a
 built-in type (`feat`; beads store `feature`). It is read from
@@ -114,9 +116,11 @@ the workspace database on every sweep, never from `config.yaml`, so every
 client of a shared workspace sees the same rule; a `types.retained` key in
 `config.yaml` is ignored, and the bulk deletes warn that it is. If bd cannot
 read it, the
-sweep fails and deletes nothing. What it does not cover is deliberate and
-per id: `bd delete` deletes the ids you name, `bd mol burn` the molecule you
-name, and `bd sql` bypasses bd entirely. Over HTTP, a server that
+sweep fails and deletes nothing. What it does not cover deletes only what you
+name: `bd delete` the ids you name, `bd mol burn` the molecule you name,
+`bd mol squash` the named molecule's ephemeral children, `bd cook --force` the
+proto it replaces, and `bd repo remove` the beads hydrated from the repo you
+name. `bd sql` bypasses bd entirely. Over HTTP, a server that
 honors the setting advertises `issues.sweep.retainedTypes`. Against an older
 server, which would delete those beads without retiring their ids, bd reads
 the setting first and refuses a plain `bd prune` or `bd purge` when it names

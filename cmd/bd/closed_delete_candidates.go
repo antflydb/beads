@@ -18,10 +18,11 @@ import (
 // cannot come to disagree about what "a closed bead safe to delete" means.
 //
 // The other bulk deletes outside the role — `bd admin cleanup`, `bd mol wisp
-// gc` and the stale-closed-issues doctor fix — select by their own rules, but
-// all of them delete through the Deleter role, which writes no tombstone, so
-// each holds back the beads of a retained type through holdBackRetainedTypes
-// (the doctor fix, in its own package, through the workapi partition itself).
+// gc`, `bd doctor --check=pollution --clean`, `bd migrate-personal` and the
+// stale-closed-issues and Patrol Pollution doctor fixes — select by their own
+// rules, and none of them writes a tombstone, so each holds back the beads of
+// a retained type through the workapi partition (holdBackRetainedTypes here;
+// the doctor fixes, in their own package, call it directly).
 
 type closedDeletionCandidateStats = issueops.SweepSkips
 

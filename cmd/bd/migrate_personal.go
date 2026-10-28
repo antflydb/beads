@@ -21,6 +21,8 @@ import (
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/ui"
 	"github.com/steveyegge/beads/internal/utils"
+	"github.com/steveyegge/beads/internal/workapi"
+	"github.com/steveyegge/beads/issueops"
 )
 
 // openMigrationPlanningStore opens the personal planning workspace's store for
@@ -401,11 +403,17 @@ func runMigratePersonal(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to search issues: %w", err)
 	}
 
-	var personal []*types.Issue
-	for _, issue := range allIssues {
-		if issue.CreatedBy == identity {
-			personal = append(personal, issue)
-		}
+	// The retained types are read from the project database the deletes go
+	// to, and a read error fails the move: the delete below retires no id
+	// there, so moving on a guess could take a bead whose id must be retired.
+	warnIgnoredYAMLRetainedTypes()
+	retainedSetting, err := store.GetConfig(ctx, issueops.SettingKeyTypesRetained)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", issueops.SettingKeyTypesRetained, err)
+	}
+	personal, retained := selectPersonalIssues(allIssues, identity, retainedSetting)
+	if retained > 0 {
+		fmt.Println(retainedTypesKeptLine(retained, "issue(s) you created"))
 	}
 
 	if len(personal) == 0 {
@@ -742,4 +750,19 @@ func pluralIssue(n int) string {
 		return "issue"
 	}
 	return "issues"
+}
+
+// selectPersonalIssues picks the beads identity created and holds back those
+// of a type the workspace retains (retainedSetting is the stored value of
+// types.retained), counting them. The move deletes its beads from the project
+// database without a tombstone, so a retained bead's id — an idempotency key —
+// is never its to free; it stays where it is.
+func selectPersonalIssues(all []*types.Issue, identity, retainedSetting string) ([]*types.Issue, int) {
+	var mine []*types.Issue
+	for _, issue := range all {
+		if issue.CreatedBy == identity {
+			mine = append(mine, issue)
+		}
+	}
+	return workapi.PartitionSweepRetainedTypes(mine, workapi.RetainedTypesFromSetting(retainedSetting))
 }

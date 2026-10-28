@@ -122,3 +122,42 @@ func TestIgnoredYAMLRetainedTypesWarning(t *testing.T) {
 		}
 	}
 }
+
+// TestSelectPollutionDeletableHoldsBackRetainedTypes pins `bd doctor
+// --check=pollution --clean`'s selection: the heuristic picks test-looking
+// beads across the whole workspace and deletes them row by row with no
+// tombstone, so a bead of a type types.retained names is held back and
+// counted; an unset setting holds nothing back.
+func TestSelectPollutionDeletableHoldsBackRetainedTypes(t *testing.T) {
+	op := pollutionResult{issue: &types.Issue{ID: "bd-op", Title: "test op", IssueType: types.IssueType("op")}, score: 0.95}
+	task := pollutionResult{issue: &types.Issue{ID: "bd-task", Title: "test task", IssueType: types.TypeTask}, score: 0.8}
+
+	deletable, retained := selectPollutionDeletable([]pollutionResult{op, task}, "op")
+	if retained != 1 || len(deletable) != 1 || deletable[0].issue != task.issue {
+		t.Errorf("selectPollutionDeletable(op retained) = %v, %d; want [bd-task], 1", deletable, retained)
+	}
+	deletable, retained = selectPollutionDeletable([]pollutionResult{op, task}, "")
+	if retained != 0 || len(deletable) != 2 {
+		t.Errorf("selectPollutionDeletable(unset) = %v, %d; want both, 0", deletable, retained)
+	}
+}
+
+// TestSelectPersonalIssuesHoldsBackRetainedTypes pins `bd migrate-personal`'s
+// selection: it takes every bead the caller created and deletes it from the
+// project database after copying it elsewhere, which retires no id there, so
+// a bead of a type types.retained names stays where it is and is counted.
+func TestSelectPersonalIssuesHoldsBackRetainedTypes(t *testing.T) {
+	mineOp := &types.Issue{ID: "bd-op", CreatedBy: "me", IssueType: types.IssueType("op")}
+	mineTask := &types.Issue{ID: "bd-task", CreatedBy: "me", IssueType: types.TypeTask}
+	theirs := &types.Issue{ID: "bd-theirs", CreatedBy: "them", IssueType: types.TypeTask}
+	all := []*types.Issue{mineOp, mineTask, theirs}
+
+	personal, retained := selectPersonalIssues(all, "me", "op")
+	if retained != 1 || len(personal) != 1 || personal[0] != mineTask {
+		t.Errorf("selectPersonalIssues(op retained) = %v, %d; want [bd-task], 1", personal, retained)
+	}
+	personal, retained = selectPersonalIssues(all, "me", "")
+	if retained != 0 || len(personal) != 2 {
+		t.Errorf("selectPersonalIssues(unset) = %v, %d; want bd-op and bd-task, 0", personal, retained)
+	}
+}

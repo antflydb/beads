@@ -147,34 +147,26 @@ func PatrolPollution(path string) error {
 		return fmt.Errorf("failed to query issues: %w", err)
 	}
 
-	var patrolDigestCount, sessionBeadCount int
-	var toDelete []string
-
-	for _, issue := range issues {
-		title := issue.Title
-
-		// Check for patrol digest pattern: "Digest: mol-*-patrol"
-		if strings.HasPrefix(title, "Digest: mol-") && strings.HasSuffix(title, "-patrol") {
-			patrolDigestCount++
-			toDelete = append(toDelete, issue.ID)
-			continue
-		}
-
-		// Check for session ended pattern: "Session ended: *"
-		if strings.HasPrefix(title, "Session ended:") {
-			sessionBeadCount++
-			toDelete = append(toDelete, issue.ID)
-		}
+	// The retained types are read from the workspace database the deletes go
+	// to. A read error fails the fix: it deletes by title with no tombstone,
+	// so deleting on a guess could take a bead whose id must be retired.
+	retainedSetting, err := store.GetConfig(ctx, issueops.SettingKeyTypesRetained)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", issueops.SettingKeyTypesRetained, err)
+	}
+	sel := selectPatrolPollution(issues, retainedSetting)
+	if sel.retained > 0 {
+		fmt.Printf("  Kept %d pollution bead(s) of a retained type (types.retained) — only bd prune/purge --retain-ids deletes them\n", sel.retained)
 	}
 
-	if len(toDelete) == 0 {
+	if len(sel.ids) == 0 {
 		fmt.Println("  No patrol pollution beads to delete")
 		return nil
 	}
 
 	// Delete all pollution beads
 	var deleted int
-	for _, id := range toDelete {
+	for _, id := range sel.ids {
 		if err := store.DeleteIssue(ctx, id); err != nil {
 			fmt.Printf("  Warning: failed to delete %s: %v\n", id, err)
 			continue
@@ -183,13 +175,56 @@ func PatrolPollution(path string) error {
 	}
 
 	// Report results
-	if patrolDigestCount > 0 {
-		fmt.Printf("  Deleted %d patrol digest bead(s)\n", patrolDigestCount)
+	if sel.digests > 0 {
+		fmt.Printf("  Deleted %d patrol digest bead(s)\n", sel.digests)
 	}
-	if sessionBeadCount > 0 {
-		fmt.Printf("  Deleted %d session ended bead(s)\n", sessionBeadCount)
+	if sel.sessions > 0 {
+		fmt.Printf("  Deleted %d session ended bead(s)\n", sel.sessions)
 	}
 	fmt.Printf("  Total: %d pollution bead(s) removed\n", deleted)
 
 	return nil
+}
+
+// patrolPollutionSelection is what the Patrol Pollution fix deletes (ids) and
+// how many of each kind it matched, plus how many matching beads it held back
+// because their type is retained.
+type patrolPollutionSelection struct {
+	ids                         []string
+	digests, sessions, retained int
+}
+
+// selectPatrolPollution picks the patrol digest and session-ended beads by
+// title, then holds back the matches of a type the workspace retains
+// (retainedSetting is the stored value of types.retained): the fix deletes row
+// by row and writes no tombstone, so a retained bead's id — an idempotency key
+// — is never its to free.
+func selectPatrolPollution(issues []*types.Issue, retainedSetting string) patrolPollutionSelection {
+	var matched []*types.Issue
+	for _, issue := range issues {
+		if isPatrolDigestTitle(issue.Title) || isSessionEndedTitle(issue.Title) {
+			matched = append(matched, issue)
+		}
+	}
+	deletable, retained := workapi.PartitionSweepRetainedTypes(matched, workapi.RetainedTypesFromSetting(retainedSetting))
+	sel := patrolPollutionSelection{retained: retained}
+	for _, issue := range deletable {
+		if isPatrolDigestTitle(issue.Title) {
+			sel.digests++
+		} else {
+			sel.sessions++
+		}
+		sel.ids = append(sel.ids, issue.ID)
+	}
+	return sel
+}
+
+// isPatrolDigestTitle matches a patrol digest: "Digest: mol-*-patrol".
+func isPatrolDigestTitle(title string) bool {
+	return strings.HasPrefix(title, "Digest: mol-") && strings.HasSuffix(title, "-patrol")
+}
+
+// isSessionEndedTitle matches a session-ended bead: "Session ended: *".
+func isSessionEndedTitle(title string) bool {
+	return strings.HasPrefix(title, "Session ended:")
 }

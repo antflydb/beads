@@ -196,7 +196,9 @@ func RetainedTypesFromSetting(value string) map[string]bool {
 // when RetainIDs is unset, because a retaining sweep deletes the row AND
 // retires its id, which is the one way such a row may leave. The bulk deletes
 // that cannot retire an id — `bd gc`'s decay, `bd admin cleanup`, `bd mol wisp
-// gc` and the stale-closed-issues doctor fix — call it on their own selection.
+// gc`, the stale-closed-issues and Patrol Pollution doctor fixes, `bd doctor
+// --check=pollution --clean` and `bd migrate-personal` — call it on their own
+// selection.
 func PartitionSweepRetainedTypes(candidates []*types.Issue, retained map[string]bool) (kept []*types.Issue, retentionRequired int) {
 	if len(retained) == 0 {
 		return candidates, 0
