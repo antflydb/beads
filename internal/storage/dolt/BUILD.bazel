@@ -197,6 +197,7 @@ go_test(
         "custom_status_test.go",
         "cycle_detector_contract_test.go",
         "deleter_contract_test.go",
+        "demote_coordination_test.go",
         "demote_to_wisp_test.go",
         "dependencies_conflict_test.go",
         "dependencies_extended_test.go",
