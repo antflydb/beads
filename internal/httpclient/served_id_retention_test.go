@@ -111,3 +111,7 @@ func TestServedIDRetentionARacingRecreateNeverLands(t *testing.T) {
 func TestServedIDRetentionRefusesANoHistoryRecreateThroughEveryDoor(t *testing.T) {
 	conformance.RunIDRetentionRefusesANoHistoryRecreateThroughEveryDoor(t, t.Context(), newServedIDRetentionFixture(t, "hidre"))
 }
+
+func TestServedIDRetentionAWispsPlaneRetainingSweepRetiresItsRows(t *testing.T) {
+	conformance.RunIDRetentionAWispsPlaneRetainingSweepRetiresItsRows(t, t.Context(), newServedIDRetentionFixture(t, "hidrf"))
+}

@@ -64,6 +64,9 @@ func TestIDRetentionContract(t *testing.T) {
 	t.Run("RefusesANoHistoryRecreateThroughEveryDoor", func(t *testing.T) {
 		conformance.RunIDRetentionRefusesANoHistoryRecreateThroughEveryDoor(t, ctx, fixture)
 	})
+	t.Run("AWispsPlaneRetainingSweepRetiresItsRows", func(t *testing.T) {
+		conformance.RunIDRetentionAWispsPlaneRetainingSweepRetiresItsRows(t, ctx, fixture)
+	})
 }
 
 // TestIDRetentionContractRaces runs the three race cases on a store of their

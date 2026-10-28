@@ -382,6 +382,7 @@ var roleContractCases = []roleContract{
 		RunIDRetentionARacingUpsertNeverResurrects,
 		RunIDRetentionARacingImportNeverResurrects,
 		RunIDRetentionRefusesANoHistoryRecreateThroughEveryDoor,
+		RunIDRetentionAWispsPlaneRetainingSweepRetiresItsRows,
 	),
 
 	// The accessor named here is NOT a storage.DoltStorage one, alone among

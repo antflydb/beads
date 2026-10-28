@@ -38,7 +38,8 @@ import (
 // the upsert-shaped create and the import — against the sweep, round after
 // round with staggered starts, and pin that no interleaving leaves a live row
 // beside a tombstone. Case 17 re-creates a retired no-history row (the shape
-// an orchestrator's operation rows take) through every door.
+// an orchestrator's operation rows take) through every door, and case 18
+// retires such rows with the wisps-plane request an orchestrator sends.
 //
 // Every case scopes its ids with the fixture's IssuePrefix and a tag, and
 // every sweep names its rows with an exact pattern, so the cases share one
@@ -691,6 +692,67 @@ func RunIDRetentionRefusesANoHistoryRecreateThroughEveryDoor(t *testing.T, ctx c
 		t.Errorf("ImportBatch(retired no-history row) = {Created:%d RetiredIDs:%v}, want {0 [%s]}", result.Created, result.RetiredIDs, id)
 	}
 	idRetentionAssertAbsent(t, ctx, fixture, id)
+}
+
+// RunIDRetentionAWispsPlaneRetainingSweepRetiresItsRows drives the exact
+// request shape an orchestrator sweeping its operation rows sends: tier
+// wisps-plane, RetainIDs, ProtectReferenced off and a Limit. The wisps-plane
+// tier has its own candidate path on every backend, so the durable and
+// ephemeral cases above do not cover it. A no-history row and an ephemeral
+// row, both closed, are retired into wisp_id_tombstones with their closed_at,
+// and a re-create of either is refused through Lifecycle.Create and, where
+// the backend serves one, through the upsert-shaped create.
+func RunIDRetentionAWispsPlaneRetainingSweepRetiresItsRows(t *testing.T, ctx context.Context, fixture IDRetentionFixture) {
+	t.Helper()
+	noHistory := sweeperIssue(fixture.Sweep, "wplane", "nohist", false)
+	noHistory.NoHistory = true
+	if err := fixture.Sweep.CreateWisp(ctx, noHistory, idRetentionActor); err != nil {
+		t.Fatalf("seeding %s: %v", noHistory.ID, err)
+	}
+	ephemeral := sweeperIssue(fixture.Sweep, "wplane", "eph", true)
+	if err := fixture.Sweep.CreateWisp(ctx, ephemeral, idRetentionActor); err != nil {
+		t.Fatalf("seeding %s: %v", ephemeral.ID, err)
+	}
+	result := sweeperSweep(t, ctx, fixture.Sweep, publicops.SweepRequest{
+		Tier:              publicops.SweepWispsPlane,
+		IDPattern:         sweeperPattern(fixture.Sweep, "wplane"),
+		RetainIDs:         true,
+		ProtectReferenced: false,
+		Limit:             10,
+	})
+	if result.Swept != 2 || result.Remaining != 0 {
+		t.Fatalf("wisps-plane retaining sweep: Swept = %d, Remaining = %d; want 2 and 0", result.Swept, result.Remaining)
+	}
+	if !result.RetainIDs {
+		t.Errorf("result.RetainIDs = false, want the request echoed")
+	}
+	for _, id := range []string{noHistory.ID, ephemeral.ID} {
+		idRetentionAssertTombstones(t, ctx, fixture, id, 0, 1)
+		var stamped int
+		if err := fixture.Sweep.QueryScalar(ctx, "SELECT COUNT(*) FROM wisp_id_tombstones WHERE id = ? AND closed_at = ?",
+			[]any{id, sweeperClosedAt}, &stamped); err != nil {
+			t.Fatalf("reading the tombstone closed_at of %s: %v", id, err)
+		}
+		if stamped != 1 {
+			t.Errorf("wisp tombstone of %s does not carry the swept row's closed_at %s", id, sweeperClosedAt.Format(time.RFC3339))
+		}
+	}
+	reissue := func(id string) *types.Issue {
+		issue := idRetentionOpenIssue(id, id == ephemeral.ID)
+		issue.NoHistory = id == noHistory.ID
+		return issue
+	}
+	for _, id := range []string{noHistory.ID, ephemeral.ID} {
+		_, err := fixture.Lifecycle.Create(ctx, publicops.CreateRequest{Actor: idRetentionActor, ForceIDPrefix: true, Issue: reissue(id)})
+		idRetentionAssertExpired(t, err, id)
+		idRetentionAssertAbsent(t, ctx, fixture, id)
+		if fixture.UpsertCreate == nil {
+			t.Logf("fixture serves no upsert-shaped create; %s not re-created through it", id)
+			continue
+		}
+		idRetentionAssertExpired(t, fixture.UpsertCreate(ctx, reissue(id), idRetentionActor), id)
+		idRetentionAssertAbsent(t, ctx, fixture, id)
+	}
 }
 
 // idRetentionRaceDoor runs idRetentionRaceRounds rounds of one door against
