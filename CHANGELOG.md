@@ -1043,6 +1043,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the literal `depends-on` or `blocked-by` type are left as they are:
   `bd dep remove` plus `bd dep add` replaces one.
 
+- `bd -C <dir>` (or `BEADS_DIR`) naming a beads project outside any git
+  repository, run from inside one, no longer adopts the caller's repository
+  root, role or git remote. The project is now rooted at its own directory
+  and treated as external, as it already was when run from outside any
+  repository; git-backed operations against it fail with git's own "not a
+  git repository" error instead of acting on the caller's repository
+  (GH#5700).
+
 - `bd gitlab pull` no longer overwrites a bead linked to another GitLab
   project's issue with the same number, or puts that issue's dependency
   links on it. Issue IIDs are only unique within a project, but when the
