@@ -679,6 +679,7 @@ go_test(
         "create_embedded_test.go",
         "create_external_ref_test.go",
         "create_form_test.go",
+        "create_host_mismatch_test.go",
         "create_input_test.go",
         "create_labels_test.go",
         "create_markdown_batch_test.go",
