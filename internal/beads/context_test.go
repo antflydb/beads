@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -1589,14 +1590,44 @@ func TestIsPathInSafeBoundary_DeniedPrefixOutsideOwnHome(t *testing.T) {
 // TestIsPathInSafeBoundary_DeniedPrefixHomeNeverFromHOME pins AC-3: the home
 // carve-out pierces the deny list, so when the account database has no answer
 // it fails closed rather than trusting the caller-set $HOME (as the peer-home
-// check does), even when $HOME names a directory the process owns.
+// check does), even when $HOME names a directory the process owns. The caller
+// and currentAccount's own body are both run, so a $HOME fallback added to
+// either fails here.
 func TestIsPathInSafeBoundary_DeniedPrefixHomeNeverFromHOME(t *testing.T) {
+	realAccount := currentAccount
 	f := newOwnHomeFixture(t)
 	t.Setenv("HOME", f.home)
-	f.setAccount(0, "", errors.New("no account entry"))
 	path := filepath.Join(f.home, "releases", "r1", ".beads")
-	if isPathInSafeBoundary(path) {
-		t.Errorf("isPathInSafeBoundary(%q) = true with HOME=%q and no account entry, want false", path, f.home)
+
+	t.Run("account seam fails", func(t *testing.T) {
+		f.setAccount(0, "", errors.New("no account entry"))
+		if isPathInSafeBoundary(path) {
+			t.Errorf("isPathInSafeBoundary(%q) = true with HOME=%q and no account entry, want false", path, f.home)
+		}
+	})
+
+	origLookup := lookupCurrentUser
+	t.Cleanup(func() { lookupCurrentUser = origLookup })
+	for _, tc := range []struct {
+		name string
+		u    *user.User
+		err  error
+	}{
+		{"account lookup fails", nil, errors.New("no account entry")},
+		{"account has no home", &user.User{Username: "svc"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			currentAccount = realAccount
+			lookupCurrentUser = func() (*user.User, error) { return tc.u, tc.err }
+			// As root the uid guard alone rejects the path, so this answer is
+			// what pins a $HOME fallback inside currentAccount on every runner.
+			if _, home, err := currentAccount(); err == nil || home != "" {
+				t.Errorf("currentAccount() = home %q, err %v with HOME=%q, want an error and no home", home, err, f.home)
+			}
+			if isPathInSafeBoundary(path) {
+				t.Errorf("isPathInSafeBoundary(%q) = true with HOME=%q, want false", path, f.home)
+			}
+		})
 	}
 }
 
@@ -1610,6 +1641,18 @@ func TestIsPathInSafeBoundary_DeniedPrefixHomeGuards(t *testing.T) {
 	f := newOwnHomeFixture(t)
 	inHome := filepath.Join(f.home, "releases", "r1", ".beads")
 	rootsvc := filepath.Join(f.lib, "rootsvc")
+	// rootsvc stands for a root-owned home strictly inside a denied prefix, as
+	// macOS's /private/var/root is. Off root, every directory the test can
+	// create is the runner's own, so the ownership check is told this one is
+	// root's: the root row then depends on the uid guard alone.
+	origOwned := dirOwnedByFn
+	t.Cleanup(func() { dirOwnedByFn = origOwned })
+	dirOwnedByFn = func(dir string, uid int) bool {
+		if dir == rootsvc {
+			return uid == 0
+		}
+		return origOwned(dir, uid)
+	}
 	for _, tc := range []struct {
 		name     string
 		uid      int

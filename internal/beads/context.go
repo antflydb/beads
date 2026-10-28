@@ -610,6 +610,10 @@ func resolvedPathWithinRoot(absPath, root string) bool {
 	return resolved == resolvedRoot || strings.HasPrefix(resolved, resolvedRoot+string(filepath.Separator))
 }
 
+// lookupCurrentUser is user.Current, swappable so a test can run
+// currentAccount's own body against an account database with no answer.
+var lookupCurrentUser = user.Current
+
 // currentAccount reports the process uid and the home the account database
 // records for it. Unlike the peer-home check it never falls back to
 // os.UserHomeDir: the home it returns pierces the SEC-003 deny list, and $HOME
@@ -618,7 +622,7 @@ func resolvedPathWithinRoot(absPath, root string) bool {
 // inOwnHomeUnderPrefix is what $HOME cannot forge.) A package var so tests can
 // stand in an account whose home lives under a denied prefix.
 var currentAccount = func() (uid int, home string, err error) {
-	u, err := user.Current()
+	u, err := lookupCurrentUser()
 	if err != nil {
 		return 0, "", err
 	}
@@ -627,6 +631,11 @@ var currentAccount = func() (uid int, home string, err error) {
 	}
 	return os.Getuid(), u.HomeDir, nil
 }
+
+// dirOwnedByFn is dirOwnedBy, swappable so a test can stand in a root-owned
+// home (macOS's /private/var/root sits strictly inside the denied /private) on
+// a runner where every directory the test can create is owned by its own uid.
+var dirOwnedByFn = dirOwnedBy
 
 // inOwnHomeUnderPrefix reports whether absPath, which the SEC-003 deny loop
 // matched against prefix, lies inside the current account's own home. The
@@ -651,7 +660,7 @@ func inOwnHomeUnderPrefix(absPath, prefix string) bool {
 		if strings.HasPrefix(h, prefix+"/") && (absPath == h || strings.HasPrefix(absPath, h+"/")) {
 			// Same symlink-escape treatment as the /var/tmp and /Users/Shared
 			// carve-outs: a link inside the home must not lead out of it.
-			return dirOwnedBy(home, uid) && resolvedPathWithinRoot(absPath, home)
+			return dirOwnedByFn(home, uid) && resolvedPathWithinRoot(absPath, home)
 		}
 	}
 	return false
