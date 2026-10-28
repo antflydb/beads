@@ -49,7 +49,8 @@ type BatchCreateOptions struct {
 	// *issueops.IdempotencyExpiredError. The skipped row writes nothing — no
 	// row, labels, comments or edges — and an edge into it is reported
 	// through OnSkippedDependency. ConflictSkip skips such rows silently
-	// whether or not this is set. It is how an import reports a swept row
+	// whether or not this is set, so a ConflictSkip caller that counts the
+	// rows it submitted counts a retired row it never wrote. It is how an import reports a swept row
 	// rather than resurrecting it. May fire more than once per issue if the
 	// enclosing transaction retries; callers should dedup by ID.
 	OnRetiredID func(issueID string)

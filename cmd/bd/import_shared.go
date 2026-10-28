@@ -231,23 +231,33 @@ func importIssuesCore(ctx context.Context, _ string, store storage.DoltStorage, 
 func assembleImportResult(issues []*types.Issue, staleSkippedIDs []string, changePlan importChangePlan, staleRejectedSet, retiredSet map[string]struct{}, skippedDependencies []string) *ImportResult {
 	importedIDs := make([]string, 0, len(issues))
 	var retiredIDs []string
+	reportedRetired := map[string]bool{}
 	for _, issue := range issues {
 		if _, rejected := staleRejectedSet[issue.ID]; rejected {
 			staleSkippedIDs = append(staleSkippedIDs, issue.ID)
 			continue
 		}
 		if _, retired := retiredSet[issue.ID]; retired {
-			retiredIDs = append(retiredIDs, issue.ID)
+			// Deduplicated: a file can carry a retired id more than once.
+			if !reportedRetired[issue.ID] {
+				reportedRetired[issue.ID] = true
+				retiredIDs = append(retiredIDs, issue.ID)
+			}
 			continue
 		}
 		importedIDs = append(importedIDs, issue.ID)
 	}
 	// Drop planned updates the in-txn guard rejected (a local update raced
-	// in between the pre-filter read and the batch write).
+	// in between the pre-filter read and the batch write), and those whose
+	// row a retaining sweep retired in that window: the batch skipped them,
+	// so they were not rewritten.
 	updatedIssues := make([]ImportChange, 0, len(changePlan.Updates))
 	updatedCount := 0
 	for _, change := range changePlan.Updates {
 		if _, rejected := staleRejectedSet[change.ID]; rejected {
+			continue
+		}
+		if _, retired := retiredSet[change.ID]; retired {
 			continue
 		}
 		updatedIssues = append(updatedIssues, change)
@@ -1121,8 +1131,12 @@ func classifyDryRunImport(ctx context.Context, store importIssueLookup, issues [
 	if err != nil {
 		return nil, err
 	}
+	retiredSet := make(map[string]bool, len(retiredIDs))
+	for _, id := range retiredIDs {
+		retiredSet[id] = true
+	}
 	for _, issue := range filtered {
-		if issue != nil && slices.Contains(retiredIDs, issue.ID) {
+		if issue != nil && retiredSet[issue.ID] {
 			considered--
 		}
 	}
@@ -1184,6 +1198,7 @@ func excludeRetiredFromImportPlan(ctx context.Context, store importIssueLookup, 
 		return nil, nil
 	}
 	var retiredIDs []string
+	listed := make(map[string]bool, len(retired))
 	for _, row := range rows {
 		if row == nil {
 			continue
@@ -1192,7 +1207,8 @@ func excludeRetiredFromImportPlan(ctx context.Context, store importIssueLookup, 
 			continue
 		}
 		plan.NewCount--
-		if !slices.Contains(retiredIDs, row.ID) {
+		if !listed[row.ID] {
+			listed[row.ID] = true
 			retiredIDs = append(retiredIDs, row.ID)
 		}
 	}

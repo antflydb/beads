@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -956,5 +957,30 @@ func TestImportLeaseAlreadyReconciledComparesAtSecondGranularity(t *testing.T) {
 	incoming.LeaseExpiresAt = &nextSecond
 	if importLeaseAlreadyReconciled(incoming, local) {
 		t.Fatalf("a lease expiry one second apart is a different lease row")
+	}
+}
+
+// TestAssembleImportResultDedupesRetiredRowsAndDropsTheirUpdates pins the
+// real import's report when the batch skips retired rows. A file can carry a
+// retired id more than once, and RetiredIDs lists it once. A row the
+// pre-filter planned as an update (it was live then) that a retaining sweep
+// retired before the write is reported retired only: it is not in
+// UpdatedIssues and Updated does not count it.
+func TestAssembleImportResultDedupesRetiredRowsAndDropsTheirUpdates(t *testing.T) {
+	issues := []*types.Issue{
+		{ID: "bd-retired"}, {ID: "bd-swept"}, {ID: "bd-retired"}, {ID: "bd-kept"}, {ID: "bd-new"},
+	}
+	plan := importChangePlan{Updates: []ImportChange{{ID: "bd-swept"}, {ID: "bd-kept"}}}
+	retired := map[string]struct{}{"bd-retired": {}, "bd-swept": {}}
+	result := assembleImportResult(issues, nil, plan, map[string]struct{}{}, retired, nil)
+
+	if !slices.Equal(result.RetiredIDs, []string{"bd-retired", "bd-swept"}) {
+		t.Errorf("RetiredIDs = %v, want [bd-retired bd-swept]: deduplicated, in file order", result.RetiredIDs)
+	}
+	if result.Updated != 1 || len(result.UpdatedIssues) != 1 || result.UpdatedIssues[0].ID != "bd-kept" {
+		t.Errorf("Updated = %d, UpdatedIssues = %v; want only bd-kept: a retired row was not rewritten", result.Updated, result.UpdatedIssues)
+	}
+	if !slices.Equal(result.ImportedIDs, []string{"bd-kept", "bd-new"}) || result.Created != 2 {
+		t.Errorf("Created = %d, ImportedIDs = %v; want 2, [bd-kept bd-new]", result.Created, result.ImportedIDs)
 	}
 }
