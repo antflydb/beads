@@ -3,6 +3,7 @@ package issueops
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"regexp"
 	"slices"
 	"testing"
@@ -249,6 +250,61 @@ func TestRetainingSweepCoordinatesBeforeItDeletes(t *testing.T) {
 	}
 	if len(wisp) != 0 || len(durable) != 2 {
 		t.Fatalf("sweepRetiredIDsInTx() = %v wisp, %v durable; want both durable", wisp, durable)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPersistenceMoveCoordinatesBeforeItLocatesTheRow pins the move's lock
+// order: a persistence move re-inserts the row into the other plane, so it
+// takes the id's shard cell before it reads where the row lives. A move that
+// came second behind a retaining sweep of the same row then reads after the
+// sweep's commit; one that came first makes the sweep conflict and retry.
+func TestPersistenceMoveCoordinatesBeforeItLocatesTheRow(t *testing.T) {
+	db, mock := newIDRetentionMock(t)
+	expectCoordination(mock, coordinationKeysFor("bd-1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM wisps WHERE id = ?")).WithArgs("bd-1").
+		WillReturnError(context.Canceled)
+	current := &types.Issue{ID: "bd-1", Status: types.StatusClosed}
+	if _, err := MoveIssuePersistenceInTx(context.Background(), db, current, types.PersistenceModeEphemeral, "actor"); err == nil {
+		t.Fatal("MoveIssuePersistenceInTx() = nil; the mock fails the plane read")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPersistenceMoveOfAVanishedRowIsNotFound pins that a move whose row is in
+// neither plane once it holds the cell — a retaining sweep deleted it first —
+// refuses with ErrNotFound and writes nothing, instead of inserting the
+// caller's earlier snapshot into the target plane beside the new tombstone.
+func TestPersistenceMoveOfAVanishedRowIsNotFound(t *testing.T) {
+	db, mock := newIDRetentionMock(t)
+	expectCoordination(mock, coordinationKeysFor("bd-1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM wisps WHERE id = ?")).WithArgs("bd-1").
+		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(0))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM issues WHERE id = ?")).WithArgs("bd-1").
+		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(0))
+	current := &types.Issue{ID: "bd-1", Status: types.StatusClosed}
+	_, err := MoveIssuePersistenceInTx(context.Background(), db, current, types.PersistenceModeEphemeral, "actor")
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("MoveIssuePersistenceInTx(vanished row) = %v, want ErrNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPromoteCoordinatesBeforeItReadsTheWisp pins the same order on wisp
+// promotion, which re-inserts the wisp into the issues plane.
+func TestPromoteCoordinatesBeforeItReadsTheWisp(t *testing.T) {
+	db, mock := newIDRetentionMock(t)
+	expectCoordination(mock, coordinationKeysFor("bd-1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT 1 FROM wisps WHERE id = ? LIMIT 1")).WithArgs("bd-1").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}))
+	if err := PromoteFromEphemeralInTx(context.Background(), db, "bd-1", "actor"); err == nil {
+		t.Fatal("PromoteFromEphemeralInTx() = nil; the mock ends after the wisp probe")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
