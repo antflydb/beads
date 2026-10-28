@@ -122,9 +122,13 @@ func (r *issueSQLRepositoryImpl) Insert(ctx context.Context, issue *types.Issue,
 		}
 	}
 	// The upsert below would resurrect a row a retaining sweep retired; an
-	// explicit retired id with no live row is refused instead.
-	if err := issueops.RefuseRetiredIDInTx(ctx, r.runner, issue.ID); err != nil {
-		return err
+	// explicit retired id with no live row is refused instead. A generated id
+	// is never retired (the generators skip tombstones), so it is not guarded,
+	// as issueops' create body does not guard one.
+	if opts.ExplicitID {
+		if err := issueops.RefuseRetiredIDInTx(ctx, r.runner, issue.ID); err != nil {
+			return err
+		}
 	}
 	if err := insertIssueRow(ctx, r.runner, table, issue); err != nil {
 		return err

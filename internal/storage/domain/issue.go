@@ -17,6 +17,12 @@ import (
 type InsertIssueOpts struct {
 	UseWispsTable bool
 	CreateOnly    bool
+	// ExplicitID reports that the caller named the id (createIDNamedByCaller)
+	// rather than a generator minting it. The upsert Insert guards only such
+	// an id against retirement: the generators already skip retired ids, so
+	// coordinating and probing a minted one is a cell write, a probe and, on
+	// a Dolt server, a commit-conflict surface for no safety.
+	ExplicitID bool
 }
 
 type IssueTableOpts struct {
@@ -1030,6 +1036,7 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 		issue.CreatedAt = time.Now().UTC()
 	}
 
+	explicitID := createIDNamedByCaller(params)
 	switch {
 	case params.ExplicitID != "":
 		issue.ID = params.ExplicitID
@@ -1067,7 +1074,7 @@ func (u *issueUseCaseImpl) create(ctx context.Context, params CreateIssueParams,
 		}
 	}
 
-	insertOpts := InsertIssueOpts{UseWispsTable: useWisp, CreateOnly: params.CreateOnly}
+	insertOpts := InsertIssueOpts{UseWispsTable: useWisp, CreateOnly: params.CreateOnly, ExplicitID: explicitID}
 	if err := u.issueRepo.Insert(ctx, issue, actor, insertOpts); err != nil {
 		return CreateIssueResult{}, fmt.Errorf("create: insert: %w", err)
 	}
@@ -2101,4 +2108,16 @@ func (u *issueUseCaseImpl) Reclaim(ctx context.Context, request publicops.Reclai
 // refusals must reach the caller as the body built them.
 func (u *issueUseCaseImpl) RenewLease(ctx context.Context, request publicops.HeartbeatRequest) (publicops.HeartbeatResult, error) {
 	return u.issueRepo.RenewLease(ctx, request)
+}
+
+// createIDNamedByCaller reports whether a create's id is the caller's rather
+// than a generator's: named by ExplicitID, or preset on the issue with no
+// parent whose child counter would replace it. It mirrors issueops'
+// prepareCreateIssueInTx, which treats an id present before assignment as
+// explicit.
+func createIDNamedByCaller(params CreateIssueParams) bool {
+	if params.ExplicitID != "" {
+		return true
+	}
+	return params.ParentID == "" && params.Issue != nil && params.Issue.ID != ""
 }
