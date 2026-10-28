@@ -59,7 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration locks older bd binaries, which do not check tombstones, out of a
   migrated Dolt database, but not a process that was already running when the
   migration landed, so every writer must run this release before any retaining
-  sweep runs. The new `IDRetention` conformance contract runs on every leg.
+  sweep runs. A retaining sweep holds the create-coordination cell of every id
+  it retires (4096 shards shared by unrelated ids) until it commits, so keep
+  `limit` small, around 100, and loop on `remaining`. The new `IDRetention`
+  conformance contract runs on every leg.
 - `bd versions <id>` lists the versions recorded for a bead, and
   `versioned-history.enabled` turns recording on. While it is on, every
   accepted change to a bead created while it is on, or that enters the issues

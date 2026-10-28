@@ -572,6 +572,18 @@ const idRetentionRaceRounds = 12
 // The race cases need a fixture whose roles can hold several connections at
 // once; a leg whose case fixture serializes them (one connection) must run
 // these three cases on a fixture that does not, or they race nothing.
+//
+// THEY DISCRIMINATE ONLY ON A READ COMMITTED BACKEND. The embedded store
+// serializes its transactions, and so does the http leg served over it, so
+// there every round is one whole transaction after the other and these cases
+// pass with the coordination lock removed entirely. On a Dolt sql-server (the
+// dolt and uow legs) transactions overlap, but each reads one snapshot and a
+// sweep's delete and an upsert's write of the same row conflict at commit
+// anyway; the uow leg also passes with the lock removed. Green on those legs
+// is no evidence for the race fix. A leg can fail these cases only where the
+// upsert and import doors run READ COMMITTED and only the coordination cell
+// orders them against a sweep, such as a PostgreSQL store behind the shared
+// SQL body.
 func RunIDRetentionARacingUpsertNeverResurrects(t *testing.T, ctx context.Context, fixture IDRetentionFixture) {
 	t.Helper()
 	upsert := fixture.UpsertCreate

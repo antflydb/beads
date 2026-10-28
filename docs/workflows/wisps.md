@@ -81,6 +81,12 @@ A plain `bd purge` or `bd prune`, `bd delete`, and `bd gc` all leave deleted
 ids reusable. Over HTTP, the server must advertise `issues.sweep.retainIds`;
 without it, bd refuses the sweep before sending anything.
 
+A sweep with `--retain-ids` briefly blocks or conflicts with creates of
+unrelated ids that hash to the same coordination shard as one it retires,
+until the sweep commits. Its reach grows with its size, so keep large sweeps
+in batches of about 100 rows: `bd purge --limit 100`, repeated until nothing
+remains. `bd prune` has no `--limit`; narrow it with `--older-than` instead.
+
 ## Forcing a Phase
 
 `bd mol bond` accepts phase overrides when combining work:
