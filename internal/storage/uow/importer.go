@@ -126,7 +126,17 @@ func (o *importer) ImportBatch(ctx context.Context, request publicops.ImportBatc
 			if _, err := storageissueops.CreateIssuesInTxWithResult(ctx, runner, request.Issues, request.Actor, opts); err != nil {
 				return publicops.ImportBatchResult{}, "", err
 			}
-			result.Created = len(request.Issues) - len(staleRejected) - len(retired)
+			// A retired id is skipped on every row that carries it, so Created
+			// drops each such row, not each distinct id: a request may carry
+			// an id more than once. The set is the committed attempt's, so a
+			// replayed hook does not count twice.
+			retiredRows := 0
+			for _, issue := range request.Issues {
+				if _, ok := retired[issue.ID]; ok {
+					retiredRows++
+				}
+			}
+			result.Created = len(request.Issues) - len(staleRejected) - retiredRows
 		}
 
 		for _, memory := range request.Memories {

@@ -342,7 +342,8 @@ func RunIDRetentionRefusesInsideATransaction(t *testing.T, ctx context.Context, 
 
 // RunIDRetentionImportSkipsAndReportsARetiredRow pins the import door, which
 // does not refuse: the retired row is skipped and named in RetiredIDs, the
-// other rows still land, Created does not count it, and an edge into it is a
+// other rows still land, Created counts none of its rows — the request carries
+// it twice, as an export chaining an id's rows may — and an edge into it is a
 // skipped dependency.
 func RunIDRetentionImportSkipsAndReportsARetiredRow(t *testing.T, ctx context.Context, fixture IDRetentionFixture) {
 	t.Helper()
@@ -357,7 +358,7 @@ func RunIDRetentionImportSkipsAndReportsARetiredRow(t *testing.T, ctx context.Co
 		Actor:                idRetentionActor,
 		Source:               "id-retention-contract",
 		SkipPrefixValidation: true,
-		Issues:               []*types.Issue{idRetentionOpenIssue(id, false), freshRow},
+		Issues:               []*types.Issue{idRetentionOpenIssue(id, false), freshRow, idRetentionOpenIssue(id, false)},
 	})
 	if err != nil {
 		t.Fatalf("ImportBatch = %v, want nil: an import skips a retired row rather than refusing the batch", err)
@@ -366,7 +367,7 @@ func RunIDRetentionImportSkipsAndReportsARetiredRow(t *testing.T, ctx context.Co
 		t.Errorf("ImportBatch.RetiredIDs = %v, want [%s]", result.RetiredIDs, id)
 	}
 	if result.Created != 1 {
-		t.Errorf("ImportBatch.Created = %d, want 1 (the fresh row only)", result.Created)
+		t.Errorf("ImportBatch.Created = %d, want 1 (the fresh row only; neither row of the retired id)", result.Created)
 	}
 	skippedEdge := false
 	for _, skipped := range result.SkippedDependencies {
