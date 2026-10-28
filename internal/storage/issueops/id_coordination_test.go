@@ -310,3 +310,27 @@ func TestPromoteCoordinatesBeforeItReadsTheWisp(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestRenameOntoARetiredIDIsRefusedBeforeItWrites pins the rename guard: the
+// identity change takes the NEW id's cell and probes it before anything else,
+// so a rename onto a retired id answers *IdempotencyExpiredError and writes
+// nothing — not the row, not the journal capture, not the edges.
+func TestRenameOntoARetiredIDIsRefusedBeforeItWrites(t *testing.T) {
+	db, mock := newIDRetentionMock(t)
+	mock.ExpectBegin()
+	expectCoordination(mock, coordinationKeysFor("bd-new"))
+	mock.ExpectQuery(regexp.QuoteMeta(idOccupancySQL)).WithArgs("bd-new", "bd-new", "bd-new", "bd-new").
+		WillReturnRows(sqlmock.NewRows([]string{"src", "closed_at"}).AddRow("id_tombstones", idRetentionClosedAt))
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = UpdateIssueIDInTx(context.Background(), tx, "bd-old", "bd-new", &types.Issue{ID: "bd-old", Title: "t"}, "actor")
+	var expired *publicops.IdempotencyExpiredError
+	if !errors.As(err, &expired) || expired.ID != "bd-new" || !expired.ClosedAt.Equal(idRetentionClosedAt) {
+		t.Fatalf("UpdateIssueIDInTx(onto retired) = %v, want *IdempotencyExpiredError naming bd-new", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

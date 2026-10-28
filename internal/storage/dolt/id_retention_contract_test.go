@@ -67,6 +67,9 @@ func TestIDRetentionContract(t *testing.T) {
 	t.Run("AWispsPlaneRetainingSweepRetiresItsRows", func(t *testing.T) {
 		conformance.RunIDRetentionAWispsPlaneRetainingSweepRetiresItsRows(t, ctx, fixture)
 	})
+	t.Run("RefusesARenameOntoARetiredID", func(t *testing.T) {
+		conformance.RunIDRetentionRefusesARenameOntoARetiredID(t, ctx, fixture)
+	})
 }
 
 // TestIDRetentionContractRaces runs the three race cases on a store of their
@@ -135,6 +138,7 @@ func newDoltIDRetentionFixtureFor(t *testing.T, store *DoltStore, storeCleanup f
 		BatchCreator: creator,
 		Importer:     conformance.IDRetentionUpsertImporter(store),
 		UpsertCreate: store.CreateIssue,
+		Rename:       store.UpdateIssueID,
 		TxCreate: func(ctx context.Context, issue *types.Issue, actor string) error {
 			return store.RunInTransaction(ctx, "id-retention contract", func(tx storage.Transaction) error {
 				return tx.CreateIssue(ctx, issue, actor)

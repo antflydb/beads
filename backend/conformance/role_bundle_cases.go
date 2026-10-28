@@ -372,6 +372,7 @@ var roleContractCases = []roleContract{
 		RunIDRetentionRefusesThroughABatchApply,
 		RunIDRetentionRefusesThroughABatchCreate,
 		RunIDRetentionRefusesThroughTheStorageSeam,
+		RunIDRetentionRefusesARenameOntoARetiredID,
 		RunIDRetentionRefusesInsideATransaction,
 		RunIDRetentionImportSkipsAndReportsARetiredRow,
 		RunIDRetentionNeverMintsARetiredID,

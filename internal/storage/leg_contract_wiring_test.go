@@ -85,6 +85,16 @@ const idRetentionNoUpsertDoorWaiverReason = "IDRetentionFixture.UpsertCreate is 
 const idRetentionNoImportDoorWaiverReason = "IDRetentionFixture.Importer is the Importer role, and the http client " +
 	"hands out none: the wire publishes no import operation. Both import cases run on every store leg"
 
+// idRetentionNoRenameDoorWaiverReason is why the rename-onto-a-retired-id case
+// stops short of the uow and http legs: it drives the storage-level identity
+// change (storage.Storage.UpdateIssueID), and neither leg serves one. The unit
+// of work has no rename use case, and the http client answers UpdateIssueID
+// with its typed unsupported error (unsupported_gen.go). The guard it asserts lives in the
+// shared rename body, issueops.UpdateIssueIDInTx, which the store legs run.
+const idRetentionNoRenameDoorWaiverReason = "IDRetentionFixture.Rename is storage.Storage.UpdateIssueID, and this " +
+	"leg serves no identity change: the unit of work has no rename use case and the http client refuses it as " +
+	"unsupported. The guard is the shared rename body's (issueops.UpdateIssueIDInTx) and runs on every store leg"
+
 // The waivers of the three legs registered here. Each is registered beside its
 // leg rather than written into one literal, so a leg registered elsewhere
 // brings its waivers the same way; see unwiredContractEntrypoints.
@@ -107,6 +117,7 @@ func init() {
 		"RunBootstrapperRecordsNoHistoryEntryOfItsOwn":                   bootstrapSplitWaiverReason,
 		"RunIssueOperationsCreateReverseNonBlockingStagesConcreteTables": stagingWaiverReason,
 		"RunIssueOperationsCreateParentChildRecomputesWaitsForClosure":   stagingWaiverReason,
+		"RunIDRetentionRefusesARenameOntoARetiredID":                     idRetentionNoRenameDoorWaiverReason,
 	})
 	registerContractLegWaivers("http", map[string]string{
 		"RunAsOfReadIsCompleteOnlyForTheAnsweringStoresHoldings":              asOfReadNoHTTPWireWaiverReason,
@@ -120,6 +131,7 @@ func init() {
 		"RunIDRetentionARacingUpsertNeverResurrects":     idRetentionNoUpsertDoorWaiverReason,
 		"RunIDRetentionImportSkipsAndReportsARetiredRow": idRetentionNoImportDoorWaiverReason,
 		"RunIDRetentionARacingImportNeverResurrects":     idRetentionNoImportDoorWaiverReason,
+		"RunIDRetentionRefusesARenameOntoARetiredID":     idRetentionNoRenameDoorWaiverReason,
 
 		"RunCycleDetectorIncludeTracksFindsTheMoleculeRootShape":         cycleTracksWireGapWaiverReason,
 		"RunCycleDetectorIncludeTracksIgnoresAPureTracksLoop":            cycleTracksWireGapWaiverReason,

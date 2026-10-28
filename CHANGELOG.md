@@ -51,9 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `*issueops.IdempotencyExpiredError` (`ErrIdempotencyExpired`; HTTP `410
   idempotency_expired` with `param` and `closed_at`; `bd create --json`
   prints `{"error","code":"idempotency_expired","id","closed_at"}` and exits
-  1), `bd import` and the `Importer` role skip the row and report it in
-  `retired_ids` (`bd import --dry-run` previews the same skip), and id
-  generation never mints a retired id. Opt-in: a sweep without it behaves
+  1), a rename onto it (`UpdateIssueID`: `bd rename`, `bd rename-prefix`) is
+  refused the same way, `bd import` and the `Importer` role skip the row and
+  report it in `retired_ids` (`bd import --dry-run` previews the same skip),
+  and id generation never mints a retired id. Opt-in: a sweep without it behaves
   exactly as before, and only a retaining sweep retires — a plain prune or
   purge, `bd delete` and `bd gc` leave deleted ids reusable. The main-series
   migration locks older bd binaries, which do not check tombstones, out of a

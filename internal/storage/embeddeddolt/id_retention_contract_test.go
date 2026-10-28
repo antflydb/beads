@@ -80,6 +80,9 @@ func TestIDRetentionContract(t *testing.T) {
 	t.Run("AWispsPlaneRetainingSweepRetiresItsRows", func(t *testing.T) {
 		conformance.RunIDRetentionAWispsPlaneRetainingSweepRetiresItsRows(t, ctx, fixture)
 	})
+	t.Run("RefusesARenameOntoARetiredID", func(t *testing.T) {
+		conformance.RunIDRetentionRefusesARenameOntoARetiredID(t, ctx, fixture)
+	})
 }
 
 func newEmbeddedIDRetentionFixture(t *testing.T, te *testEnv, prefix string) conformance.IDRetentionFixture {
@@ -110,6 +113,7 @@ func newEmbeddedIDRetentionFixture(t *testing.T, te *testEnv, prefix string) con
 		BatchCreator: creator,
 		Importer:     conformance.IDRetentionUpsertImporter(te.store),
 		UpsertCreate: te.store.CreateIssue,
+		Rename:       te.store.UpdateIssueID,
 		TxCreate: func(ctx context.Context, issue *types.Issue, actor string) error {
 			return te.store.RunInTransaction(ctx, "id-retention contract", func(tx storage.Transaction) error {
 				return tx.CreateIssue(ctx, issue, actor)

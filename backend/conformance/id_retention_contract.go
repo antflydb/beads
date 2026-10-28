@@ -27,8 +27,8 @@ import (
 //     the row's own plane, in the same transaction (cases 1-2, 11-13);
 //   - every create-shaped door REFUSES a retired id with
 //     *issueops.IdempotencyExpiredError and writes nothing — Lifecycle.Create,
-//     the batch roles, the storage-level (upsert) create and a transaction's
-//     create (cases 3-8);
+//     the batch roles, the storage-level (upsert) create, a transaction's
+//     create and a rename onto the id (cases 3-8, 19);
 //   - the doors that do not refuse still never write it: an import skips and
 //     reports the row, and id generation never produces a retired id (cases
 //     9-10).
@@ -74,6 +74,10 @@ type IDRetentionFixture struct {
 	// TxCreate creates one issue inside the backend's transaction surface
 	// (storage.Transaction.CreateIssue). Nil skips the in-transaction case.
 	TxCreate func(ctx context.Context, issue *types.Issue, actor string) error
+	// Rename is the backend's storage-level identity change
+	// (storage.Storage.UpdateIssueID): it moves a live row from oldID to
+	// newID. Nil skips the rename case, by name.
+	Rename func(ctx context.Context, oldID, newID string, issue *types.Issue, actor string) error
 	// CommittedRetired reports whether the id_tombstones row for id is part of
 	// the committed history (an `AS OF 'HEAD'` read). Nil skips that clause of
 	// the history case.
@@ -295,6 +299,31 @@ func RunIDRetentionRefusesThroughTheStorageSeam(t *testing.T, ctx context.Contex
 		err := fixture.UpsertCreate(ctx, idRetentionOpenIssue(id, ephemeral), idRetentionActor)
 		idRetentionAssertExpired(t, err, id)
 		idRetentionAssertAbsent(t, ctx, fixture, id)
+	}
+}
+
+// RunIDRetentionRefusesARenameOntoARetiredID pins that the identity change is
+// a write path the promise covers: renaming a live row onto a retired id, on
+// either plane, is refused with *IdempotencyExpiredError and writes nothing —
+// the retired id stays absent and the source row keeps its old id.
+func RunIDRetentionRefusesARenameOntoARetiredID(t *testing.T, ctx context.Context, fixture IDRetentionFixture) {
+	t.Helper()
+	if fixture.Rename == nil {
+		t.Skip("fixture has no Rename; this backend serves no identity change")
+	}
+	for _, ephemeral := range []bool{false, true} {
+		retired := idRetentionRetire(t, ctx, fixture, "rename", ephemeral)
+		source := idRetentionID(fixture, "rename", fmt.Sprintf("live-%t", ephemeral))
+		live := idRetentionOpenIssue(source, ephemeral)
+		if _, err := fixture.Lifecycle.Create(ctx, idRetentionCreate(source, ephemeral)); err != nil {
+			t.Fatalf("seeding %s: %v", source, err)
+		}
+		err := fixture.Rename(ctx, source, retired, live, idRetentionActor)
+		idRetentionAssertExpired(t, err, retired)
+		idRetentionAssertAbsent(t, ctx, fixture, retired)
+		if got := idRetentionLiveRows(t, ctx, fixture, source); got != 1 {
+			t.Errorf("live rows of %s after a refused rename = %d, want 1: the refusal must roll the rename back", source, got)
+		}
 	}
 }
 
