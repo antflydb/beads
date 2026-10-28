@@ -202,6 +202,7 @@ func TestSweepDoesNotWriteThroughTheCallersCutoff(t *testing.T) {
 func TestSweepResultCarriesEveryWireMember(t *testing.T) {
 	remaining := int64(13)
 	liveDependent := 14
+	retainIDs := true
 	w := &stubWire{swept: &apigen.SweepResult{
 		DryRun: true, Swept: 3, Dependencies: 4, Labels: 5, Events: 6,
 		Skipped: apigen.SweepSkips{
@@ -211,15 +212,13 @@ func TestSweepResultCarriesEveryWireMember(t *testing.T) {
 		},
 		ReferencedIds: &[]string{"bd-1"},
 		Remaining:     &remaining,
+		RetainIds:     &retainIDs,
 	}}
 	result, err := bulkSweeper(t, w).Sweep(t.Context(), issueops.SweepRequest{Tier: issueops.SweepEphemeral})
 	if err != nil {
 		t.Fatalf("Sweep(): %v", err)
 	}
-	// RetainIDs is skipped while the wire carries no retain_ids member
-	// (W-SweepRequest.RetainIDs): this client refuses a retaining sweep, so a
-	// result can only echo false.
-	assertEveryFieldPopulated(t, "SweepResult", reflect.ValueOf(result), "RetainIDs")
+	assertEveryFieldPopulated(t, "SweepResult", reflect.ValueOf(result))
 	assertEveryFieldPopulated(t, "SweepSkips", reflect.ValueOf(result.Skipped))
 	if !reflect.DeepEqual(result.ReferencedIDs, []string{"bd-1"}) {
 		t.Errorf("ReferencedIDs = %v, want [bd-1]", result.ReferencedIDs)
@@ -239,7 +238,7 @@ func TestSweepResultCarriesEveryWireMember(t *testing.T) {
 // rather than a query.
 func TestSweepSendsTheS4MembersOnceTheServerAdvertisesThem(t *testing.T) {
 	served := &apigen.ContextResponse{Capabilities: []string{
-		wire.CapSweepWispsPlane, wire.CapSweepLiveDependents, wire.CapSweepLimit,
+		wire.CapSweepWispsPlane, wire.CapSweepLiveDependents, wire.CapSweepLimit, wire.CapSweepRetainIDs,
 	}}
 
 	t.Run("wisps-plane tier", func(t *testing.T) {
@@ -287,21 +286,36 @@ func TestSweepSendsTheS4MembersOnceTheServerAdvertisesThem(t *testing.T) {
 			t.Errorf("limit = %v, want 5", w.lastSweep.Limit)
 		}
 	})
-}
 
-// TestSweepRefusesRetainIDsUntilTheWireCarriesIt pins W-SweepRequest.RetainIDs:
-// a retaining sweep fails before the dial with the typed refusal, so it can
-// never run as a plain sweep that leaves the swept ids reusable.
-func TestSweepRefusesRetainIDsUntilTheWireCarriesIt(t *testing.T) {
-	w := &stubWire{}
-	_, err := bulkSweeper(t, w).Sweep(t.Context(), issueops.SweepRequest{Tier: issueops.SweepDurable, IDPattern: "*", RetainIDs: true})
-	var unsup *storage.ErrUnsupported
-	if !errors.As(err, &unsup) || !errors.Is(err, encode.ErrRefused) {
-		t.Fatalf("Sweep(RetainIDs) = %v, want the W-SweepRequest.RetainIDs refusal (ErrUnsupported and ErrRefused)", err)
-	}
-	if len(w.calls) != 0 {
-		t.Errorf("dialed %v, want none: the refusal is pre-dial", w.calls)
-	}
+	t.Run("retain_ids", func(t *testing.T) {
+		w := &stubWire{}
+		sweeper, err := New(testTarget(t), w, served).Sweeper()
+		if err != nil {
+			t.Fatalf("Sweeper(): %v", err)
+		}
+		if _, err := sweeper.Sweep(t.Context(), issueops.SweepRequest{
+			Tier: issueops.SweepWispsPlane, IDPattern: "bd-op-*", RetainIDs: true,
+		}); err != nil {
+			t.Fatalf("Sweep(): %v", err)
+		}
+		if w.lastSweep.RetainIds == nil || !*w.lastSweep.RetainIds {
+			t.Errorf("retain_ids = %v, want true", w.lastSweep.RetainIds)
+		}
+	})
+
+	t.Run("a plain sweep sends no retain_ids", func(t *testing.T) {
+		w := &stubWire{}
+		sweeper, err := New(testTarget(t), w, served).Sweeper()
+		if err != nil {
+			t.Fatalf("Sweep(): %v", err)
+		}
+		if _, err := sweeper.Sweep(t.Context(), issueops.SweepRequest{Tier: issueops.SweepEphemeral}); err != nil {
+			t.Fatalf("Sweep(): %v", err)
+		}
+		if w.lastSweep.RetainIds != nil {
+			t.Errorf("retain_ids = %v on a plain sweep, want the member absent", *w.lastSweep.RetainIds)
+		}
+	})
 }
 
 // TestSweepRefusesTheS4MembersWhenTheServerLacksTheCapability is the skew half:
@@ -319,6 +333,9 @@ func TestSweepRefusesTheS4MembersWhenTheServerLacksTheCapability(t *testing.T) {
 		{"wisps-plane tier", issueops.SweepRequest{Tier: issueops.SweepWispsPlane}, wire.CapSweepWispsPlane},
 		{"protect_live_dependents", issueops.SweepRequest{Tier: issueops.SweepDurable, ProtectLiveDependents: true}, wire.CapSweepLiveDependents},
 		{"limit", issueops.SweepRequest{Tier: issueops.SweepDurable, Limit: 5}, wire.CapSweepLimit},
+		// The refusal that matters most: a sweep that dropped the member to get
+		// past an older server would leave every swept id reusable.
+		{"retain_ids", issueops.SweepRequest{Tier: issueops.SweepDurable, IDPattern: "*", RetainIDs: true}, wire.CapSweepRetainIDs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &stubWire{}

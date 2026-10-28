@@ -57,15 +57,33 @@ const asOfReadNoHTTPWireWaiverReason = "the read under test has no form on the h
 	"instant/version-address selector nor a gone/unknown refusal, and the client's only point-in-time read, " +
 	"DoltStorage.AsOf, is a Dolt commit-ref read on its unsupported allowlist (D8)"
 
-// idRetentionWireLandsNextWaiverReason is why every IDRetention case stops
-// short of the http leg for now: the contract and its storage legs land first
-// (one layer per change), and the wire it needs — `retain_ids` on
-// issues:sweep, the 410 idempotency_expired refusal on the create doors, and
-// the served fixture — lands in the next change of the same series, which
-// replaces these waivers with the served leg's wiring.
-const idRetentionWireLandsNextWaiverReason = "the IDRetention wire (issues:sweep retain_ids, the 410 " +
-	"idempotency_expired refusal, the served fixture) lands in the next change of this series, which wires the " +
-	"http leg and retires this waiver"
+// idRetentionNoTransactionWaiverReason is why the in-transaction retired-id
+// case stops short of the http leg: it drives storage.Transaction.CreateIssue,
+// and the http client serves no transaction surface (RunInTransaction cannot
+// span requests; internal/httpclient/completeness_test.go). The refusal it
+// asserts is the shared create guard's, which runs on every store leg, and the
+// wire's own create doors refuse a retired id on this leg's createIssue and
+// applyBatch cases.
+const idRetentionNoTransactionWaiverReason = "IDRetentionFixture.TxCreate is storage.Transaction.CreateIssue, and the " +
+	"http client has no transaction surface: RunInTransaction cannot span requests. The retired-id guard it would " +
+	"exercise is the shared create body's and runs on every store leg; this leg's wire create doors run their own cases"
+
+// idRetentionNoUpsertDoorWaiverReason is why the two retired-id cases that
+// drive IDRetentionFixture.UpsertCreate stop short of the http leg: the wire
+// serves no upsert-shaped single create. createIssue is create-only (a live id
+// is a 409), so there is no overwrite-or-insert door on this leg to guard. The
+// guard both cases pin is the shared create body's and runs on every store leg.
+const idRetentionNoUpsertDoorWaiverReason = "IDRetentionFixture.UpsertCreate is a store's overwrite-or-insert " +
+	"CreateIssue, and the wire serves no such door: createIssue is create-only. The guard both cases pin is the " +
+	"shared create body's and runs on every store leg"
+
+// idRetentionNoImportDoorWaiverReason is why the two retired-id cases that
+// drive IDRetentionFixture.Importer stop short of the http leg: the wire
+// publishes no import operation, so the client hands out no Importer and this
+// leg has no import door to skip a retired row. Both cases run on every store
+// leg, through the seam `bd import` writes through there.
+const idRetentionNoImportDoorWaiverReason = "IDRetentionFixture.Importer is the Importer role, and the http client " +
+	"hands out none: the wire publishes no import operation. Both import cases run on every store leg"
 
 // The waivers of the three legs registered here. Each is registered beside its
 // leg rather than written into one literal, so a leg registered elsewhere
@@ -97,23 +115,11 @@ func init() {
 		"RunAsOfReadReturnsTheLatestVersionAtOrBeforeTStrictlyExcludingLater": asOfReadNoHTTPWireWaiverReason,
 		"RunAsOfReadSelectorAcceptsEitherAnInstantOrAVersionAddress":          asOfReadNoHTTPWireWaiverReason,
 
-		"RunIDRetentionAPlainSweepLeavesTheIDReusable":                      idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionARetainingSweepRetiresEverySweptID":                  idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionRefusesARecreateThroughCreate":                       idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionRefusesARecreateOnTheOtherPlane":                     idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionRefusesThroughABatchApply":                           idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionRefusesThroughABatchCreate":                          idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionRefusesThroughTheStorageSeam":                        idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionRefusesInsideATransaction":                           idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionImportSkipsAndReportsARetiredRow":                    idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionNeverMintsARetiredID":                                idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionDryRunRetiresNothing":                                idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionRetiresOnlyWhatItSwept":                              idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionARetainingDurableSweepRecordsExactlyOneHistoryEntry": idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionARacingRecreateNeverLands":                           idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionARacingUpsertNeverResurrects":                        idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionARacingImportNeverResurrects":                        idRetentionWireLandsNextWaiverReason,
-		"RunIDRetentionRefusesANoHistoryRecreateThroughEveryDoor":           idRetentionWireLandsNextWaiverReason,
+		"RunIDRetentionRefusesInsideATransaction":        idRetentionNoTransactionWaiverReason,
+		"RunIDRetentionRefusesThroughTheStorageSeam":     idRetentionNoUpsertDoorWaiverReason,
+		"RunIDRetentionARacingUpsertNeverResurrects":     idRetentionNoUpsertDoorWaiverReason,
+		"RunIDRetentionImportSkipsAndReportsARetiredRow": idRetentionNoImportDoorWaiverReason,
+		"RunIDRetentionARacingImportNeverResurrects":     idRetentionNoImportDoorWaiverReason,
 
 		"RunCycleDetectorIncludeTracksFindsTheMoleculeRootShape":         cycleTracksWireGapWaiverReason,
 		"RunCycleDetectorIncludeTracksIgnoresAPureTracksLoop":            cycleTracksWireGapWaiverReason,

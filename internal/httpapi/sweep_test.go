@@ -42,7 +42,7 @@ func TestSweepPathReachesItsHandler(t *testing.T) {
 }
 
 // TestSweepForwardsEveryDocumentedMember is the operation's central pin: each
-// of the eight body members reaches the role's request unchanged.
+// of the nine body members reaches the role's request unchanged.
 //
 // It is asserted on the REQUEST the role received rather than on the response:
 // a body carrying the right numbers says nothing about which set was swept, and
@@ -59,7 +59,8 @@ func TestSweepForwardsEveryDocumentedMember(t *testing.T) {
 		"protect_referenced": true,
 		"dry_run": true,
 		"protect_live_dependents": true,
-		"limit": 25
+		"limit": 25,
+		"retain_ids": true
 	}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, readAll(t, resp))
@@ -80,6 +81,7 @@ func TestSweepForwardsEveryDocumentedMember(t *testing.T) {
 		DryRun:                true,
 		ProtectLiveDependents: true,
 		Limit:                 25,
+		RetainIDs:             true,
 	}
 	cutoff := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	want.ClosedBefore = &cutoff
@@ -202,12 +204,6 @@ func TestSweepPublishesTheWholeResult(t *testing.T) {
 	}
 }
 
-// sweepRoleFieldsNotYetOnTheWire names the issueops.SweepResult fields the
-// storage layer has and the wire does not project yet. Each entry is a waiver
-// the commit that adds the field to the wire removes: RetainIDs reaches
-// issues:sweep with the retain_ids member and its behavior token.
-var sweepRoleFieldsNotYetOnTheWire = map[string]bool{"RetainIDs": true}
-
 // TestSweepResponseCarriesEveryRoleField is the guard sweepResponse's comment
 // names, the sweep twin of TestDeleteResponseCarriesEveryRoleField. It counts
 // fields at both levels the projection copies — the result and its skip
@@ -222,6 +218,7 @@ func TestSweepResponseCarriesEveryRoleField(t *testing.T) {
 			UnknownClosedAt: 9, ClosedAtOrAfterCutoff: 10, Unreadable: 11,
 		},
 		Remaining:     12,
+		RetainIDs:     true,
 		ReferencedIDs: []string{"bd-1"},
 	}
 	body := sweepResponse(full)
@@ -231,15 +228,9 @@ func TestSweepResponseCarriesEveryRoleField(t *testing.T) {
 		{full.Skipped, body.Skipped},
 	} {
 		role, wire := reflect.TypeOf(level.role), reflect.TypeOf(level.wire)
-		roleFields := role.NumField()
-		for i := range role.NumField() {
-			if sweepRoleFieldsNotYetOnTheWire[role.Field(i).Name] {
-				roleFields--
-			}
-		}
-		if roleFields != wire.NumField() {
+		if role.NumField() != wire.NumField() {
 			t.Errorf("%v has %d fields and %v has %d: a field was added to one and not projected onto the "+
-				"other (see sweepResponse)", role, roleFields, wire, wire.NumField())
+				"other (see sweepResponse)", role, role.NumField(), wire, wire.NumField())
 		}
 	}
 	requireEveryFieldSet(t, reflect.ValueOf(body), "SweepResult")
@@ -302,6 +293,8 @@ func TestSweepRefusesTheDocumentedBodies(t *testing.T) {
 		{"protect_live_dependents is not a boolean", `{"tier":"ephemeral","protect_live_dependents":"yes"}`, "protect_live_dependents"},
 		{"limit is not an integer", `{"tier":"ephemeral","limit":2.5}`, "limit"},
 		{"limit is null", `{"tier":"ephemeral","limit":null}`, "limit"},
+		{"retain_ids is not a boolean", `{"tier":"ephemeral","retain_ids":"yes"}`, "retain_ids"},
+		{"retain_ids is null", `{"tier":"ephemeral","retain_ids":null}`, "retain_ids"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			sweeper := &roleSweeper{}

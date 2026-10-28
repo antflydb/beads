@@ -241,6 +241,21 @@ const CapIssuesSweepLiveDependents = "issues.sweep.liveDependents"
 // before sending the member to a server that may predate it.
 const CapIssuesSweepLimit = "issues.sweep.limit"
 
+// CapIssuesSweepRetainIDs is the behavior capability that advertises
+// SweepRequest.retain_ids and the paired SweepResult.retain_ids echo
+// (sweep.go): a sweep that retires every id it deletes with a permanent
+// tombstone (issueops.SweepRequest.RetainIDs).
+//
+// IT PROMISES MORE THAN THE MEMBER. A server advertising it also refuses a
+// create of a retired id on every create operation — `410
+// idempotency_expired` on createIssue and on an applyBatch create item — so
+// the guarantee holds on the read side of the tombstone, not just the write
+// side. An older server answers the request member with `400
+// invalid_argument`/`unknown_parameter`; a client that needs the guarantee
+// MUST check this token and refuse to sweep without it, never fall back to a
+// sweep that leaves the ids reusable.
+const CapIssuesSweepRetainIDs = "issues.sweep.retainIds"
+
 // CapBatchApplyDepAddLineage is the behavior capability that advertises
 // ApplyDepAddItem's `has_spawner` and `thread_id` members (batch_apply.go):
 // additive fields a `dep_add` item may carry alongside `source`, `target`,
@@ -1146,6 +1161,7 @@ func (r route) specPathOf() string {
 var behaviorCapabilities = []string{
 	CapProjectEnforce, CapBatchApplyLarge, CapIssuesListSort, CapIssuesCountScope,
 	CapIssuesSweepWispsPlane, CapIssuesSweepLiveDependents, CapIssuesSweepLimit,
+	CapIssuesSweepRetainIDs,
 	CapBatchApplyDepAddLineage, CapIssuesUpdateAllowTemplate, CapIssuesCreateDefaultPriority,
 	CapIssuesCloseAutoCloseMolecule, CapIssuesListSearch,
 	CapIssuesListNoAssignee, CapIssuesListTitle, CapListIDs, CapIssuesUpdatePersistence, CapDependenciesBlockingIsBlocked, CapIssuesUpdateClaim,
