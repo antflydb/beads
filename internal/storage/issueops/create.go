@@ -210,7 +210,12 @@ func prepareCreateIssueInTx(ctx context.Context, tx DBTX, bc *BatchContext, issu
 		return "", "", prepareWrite, err
 	}
 	if bc.Opts.CreateOnly {
-		if err := EnsureIssueIDAvailableInTx(ctx, tx, issue.ID); err != nil {
+		// A batch that coordinated this id up front already holds its cell.
+		ensure := EnsureIssueIDAvailableInTx
+		if bc.cache.coordinatedID(issue.ID) {
+			ensure = checkIssueIDAvailableInTx
+		}
+		if err := ensure(ctx, tx, issue.ID); err != nil {
 			return "", "", prepareWrite, err
 		}
 		// The guard has just read both planes in this transaction and found
@@ -222,7 +227,7 @@ func prepareCreateIssueInTx(ctx context.Context, tx DBTX, bc *BatchContext, issu
 		// Coordinate before the probe (CoordinateIDCreatesInTx): on READ
 		// COMMITTED a retaining sweep could otherwise commit between the probe
 		// and the upsert below. A batch that coordinated up front already did.
-		if !bc.cache.coordinatedIDs() {
+		if !bc.cache.coordinatedID(issue.ID) {
 			if err := CoordinateIDCreatesInTx(ctx, tx, []string{issue.ID}); err != nil {
 				return "", "", prepareWrite, err
 			}

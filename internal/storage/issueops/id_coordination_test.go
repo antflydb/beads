@@ -11,6 +11,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
+	publicops "github.com/steveyegge/beads/issueops"
 )
 
 // coordinateSQL is the prefix of the shard coordination write every guarded
@@ -134,13 +135,21 @@ func TestUpsertBatchCoordinatesEveryExplicitIDBeforeItsReads(t *testing.T) {
 	}
 }
 
-// TestCreateOnlyBatchSkipsTheUpFrontTombstoneRead pins that a CreateOnly
-// batch neither coordinates up front (each row's EnsureIssueIDAvailableInTx
-// does) nor reads tombstones it would never consult: its rows are never
-// deferred and every one is probed by the create-only guard.
-func TestCreateOnlyBatchSkipsTheUpFrontTombstoneRead(t *testing.T) {
+// TestCreateOnlyBatchCoordinatesEveryIDOnceBeforeItsReads pins the
+// create-only batch's lock order: every id the batch already names is locked
+// in ONE sorted write before the up-front reads, never one item at a time in
+// item order. A retaining sweep, an upsert batch and an import lock large
+// sorted cell sets; a batch that took its cells in item order could hold a
+// later cell while waiting on an earlier one and deadlock against them (40P01
+// on Postgres, which Store.CreateIssues does not retry). It still reads no
+// tombstones up front: each row meets the create-only probe.
+func TestCreateOnlyBatchCoordinatesEveryIDOnceBeforeItsReads(t *testing.T) {
 	db, mock := newIDRetentionMock(t)
-	issues := []*types.Issue{{ID: "bd-1"}, {ID: "bd-2"}}
+	issues := []*types.Issue{
+		{ID: "bd-zz", Title: "a", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+		{ID: "bd-aa", Title: "b", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask},
+	}
+	expectCoordination(mock, coordinationKeysFor("bd-zz", "bd-aa"))
 	for _, table := range []string{"issues", "wisps"} {
 		mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM " + table + " WHERE id IN (?,?)")).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}))
@@ -149,8 +158,74 @@ func TestCreateOnlyBatchSkipsTheUpFrontTombstoneRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newCreateBatchCache(CreateOnly) = %v", err)
 	}
-	if cache.coordinated {
-		t.Fatal("a CreateOnly batch's cache claims to have coordinated; its rows must each run the create-only guard")
+	if !cache.coordinated {
+		t.Fatal("a CreateOnly batch's cache does not record that it coordinated its ids")
+	}
+	if cache.retired != nil {
+		t.Fatalf("a CreateOnly batch read tombstones up front (%v); its rows each meet the create-only probe", cache.retired)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+	// A row of this batch runs the create-only probe and writes no second
+	// cell: the only statement it may make is the occupancy read.
+	mock.ExpectQuery(regexp.QuoteMeta(idOccupancySQL)).WithArgs("bd-zz", "bd-zz", "bd-zz", "bd-zz").
+		WillReturnRows(sqlmock.NewRows([]string{"src", "closed_at"}))
+	bc := &BatchContext{Opts: storage.BatchCreateOptions{CreateOnly: true, SkipPrefixValidation: true}, cache: cache}
+	if _, _, outcome, err := prepareCreateIssueInTx(context.Background(), db, bc, issues[0], "actor"); err != nil || outcome != prepareWrite {
+		t.Fatalf("prepareCreateIssueInTx(batch row) = %v, %v; want prepareWrite, nil", outcome, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCreateOnlyRowOutsideTheUpFrontSetStillCoordinates pins that the
+// skipped lock is only skipped for an id the batch locked up front: a row
+// whose id the cache never saw (a generated id) takes its own cell before
+// its probe. The probe is the row's last read: it found no row in either
+// plane, so the cross-plane collision check does not read the sibling plane
+// again (TestCreateOnlyCreateReadsEachPlaneOnce).
+func TestCreateOnlyRowOutsideTheUpFrontSetStillCoordinates(t *testing.T) {
+	db, mock := newIDRetentionMock(t)
+	cache := &createBatchCache{
+		probed:      map[string]bool{"bd-1": true},
+		present:     map[string]map[string]bool{"issues": {}, "wisps": {}},
+		coordinated: true,
+	}
+	expectCoordination(mock, coordinationKeysFor("bd-2"))
+	mock.ExpectQuery(regexp.QuoteMeta(idOccupancySQL)).WithArgs("bd-2", "bd-2", "bd-2", "bd-2").
+		WillReturnRows(sqlmock.NewRows([]string{"src", "closed_at"}))
+	bc := &BatchContext{Opts: storage.BatchCreateOptions{CreateOnly: true, SkipPrefixValidation: true}, cache: cache}
+	issue := &types.Issue{ID: "bd-2", Title: "t", Status: types.StatusOpen, Priority: 2, IssueType: types.TypeTask}
+	if _, _, outcome, err := prepareCreateIssueInTx(context.Background(), db, bc, issue, "actor"); err != nil || outcome != prepareWrite {
+		t.Fatalf("prepareCreateIssueInTx() = %v, %v; want prepareWrite, nil", outcome, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestApplyBatchCoordinatesItsExplicitCreateIDsFirst pins the apply-batch
+// lock order: before its first item, an apply-batch locks the shard of every
+// explicit create id it carries in one sorted write, so its per-item creates
+// meet cells the transaction already holds. The statement after the lock is
+// left unexpected: the test is about what comes first.
+func TestApplyBatchCoordinatesItsExplicitCreateIDsFirst(t *testing.T) {
+	db, mock := newIDRetentionMock(t)
+	mock.ExpectBegin()
+	expectCoordination(mock, coordinationKeysFor("bd-zz", "bd-aa"))
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := storage.ApplyBatchPlan{Actor: "actor", Items: []publicops.ApplyItem{
+		{Kind: publicops.ItemCreate, Create: &publicops.CreateItem{Issue: &types.Issue{ID: "bd-zz", Title: "a"}}},
+		{Kind: publicops.ItemCreate, Create: &publicops.CreateItem{Issue: &types.Issue{Title: "generated"}}},
+		{Kind: publicops.ItemCreate, Create: &publicops.CreateItem{Issue: &types.Issue{ID: "bd-aa", Title: "b"}}},
+	}}
+	if _, _, err := ApplyBatchInTx(context.Background(), tx, plan); err == nil {
+		t.Fatal("ApplyBatchInTx() = nil; the mock has nothing after the lock, so the first item must fail")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

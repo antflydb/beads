@@ -65,11 +65,12 @@ type createBatchCache struct {
 	// create, and an upsert batch reads them only after coordinating every
 	// probed id (see coordinated), so the up-front read stays true for the
 	// whole batch. A CreateOnly batch does not read them: its rows are never
-	// deferred and each one meets EnsureIssueIDAvailableInTx.
+	// deferred and each one meets the create-only occupancy probe.
 	retired map[string]time.Time
 	// coordinated reports that the batch wrote the create coordination cell
 	// of every probed id before its up-front reads (CoordinateIDCreatesInTx),
-	// so a row it prepares need not write it again. Set for upsert batches.
+	// so a row it prepares need not write it again (coordinatedID). Set for
+	// every batch that builds a cache, upsert and CreateOnly alike.
 	coordinated bool
 }
 
@@ -86,11 +87,19 @@ const createBatchCacheMinIssues = 2
 // both planes, and the stored labels of every explicit id that carries
 // labels, in a handful of IN-list queries.
 //
-// An upsert batch (opts.CreateOnly false) first coordinates every explicit id
-// in one write and then also reads their tombstones: the coordination makes
-// the reads that follow wait out a retaining sweep of any of them, so no row
-// the batch upserts can be resurrected from under a tombstone committed
-// between the read and the write (see CoordinateIDCreatesInTx).
+// It first coordinates every explicit id in ONE sorted write
+// (CoordinateIDCreatesInTx), upsert and CreateOnly batches alike:
+//
+//   - The reads that follow then wait out a retaining sweep of any of them, so
+//     no row an upsert batch writes can be resurrected from under a tombstone
+//     committed between the read and the write. An upsert batch also reads the
+//     tombstones up front; a CreateOnly batch leaves that to each row's
+//     create-only probe.
+//   - The batch takes all its cells at once, in shard order, rather than one
+//     row at a time in item order. Retaining sweeps, upsert batches and imports
+//     lock large sorted cell sets; a batch that locked in item order could
+//     hold a later cell while it waits on an earlier one and deadlock against
+//     them. Its rows then meet cells the transaction already holds.
 func newCreateBatchCache(ctx context.Context, tx DBTX, issues []*types.Issue, opts storage.BatchCreateOptions) (*createBatchCache, error) {
 	c := &createBatchCache{
 		probed:       map[string]bool{},
@@ -107,12 +116,10 @@ func newCreateBatchCache(ctx context.Context, tx DBTX, issues []*types.Issue, op
 		c.probed[issue.ID] = true
 		ids = append(ids, issue.ID)
 	}
-	if !opts.CreateOnly {
-		if err := CoordinateIDCreatesInTx(ctx, tx, ids); err != nil {
-			return nil, err
-		}
-		c.coordinated = true
+	if err := CoordinateIDCreatesInTx(ctx, tx, ids); err != nil {
+		return nil, err
 	}
+	c.coordinated = true
 	for _, table := range []string{"issues", "wisps"} {
 		found, err := idSetInTx(ctx, tx, table, ids)
 		if err != nil {
@@ -399,10 +406,12 @@ func (c *createBatchCache) deferrable(issue *types.Issue, opts storage.BatchCrea
 	return !c.present["issues"][issue.ID] && !c.present["wisps"][issue.ID]
 }
 
-// coordinatedIDs reports whether the batch coordinated every id it probed
-// before reading them (see createBatchCache.coordinated). A nil cache did not.
-func (c *createBatchCache) coordinatedIDs() bool {
-	return c != nil && c.coordinated
+// coordinatedID reports whether the batch wrote id's coordination cell up
+// front, before its reads (see createBatchCache.coordinated): true only for an
+// id the up-front read covered. A nil cache coordinated nothing, and an id the
+// batch did not name up front (a generated one) takes its own cell.
+func (c *createBatchCache) coordinatedID(id string) bool {
+	return c != nil && c.coordinated && c.probed[id]
 }
 
 // retiredNotLive reports whether a tombstone retired id while no live row

@@ -30,6 +30,13 @@ func EnsureIssueIDAvailableInTx(ctx context.Context, tx DBTX, id string) error {
 	if err := CoordinateIDCreatesInTx(ctx, tx, []string{id}); err != nil {
 		return err
 	}
+	return checkIssueIDAvailableInTx(ctx, tx, id)
+}
+
+// checkIssueIDAvailableInTx is EnsureIssueIDAvailableInTx without the
+// coordination write, for a caller that already holds id's cell (a batch that
+// coordinated every id it names up front, newCreateBatchCache).
+func checkIssueIDAvailableInTx(ctx context.Context, tx DBTX, id string) error {
 	live, retired, err := probeIDOccupancyInTx(ctx, tx, id)
 	if err != nil {
 		return fmt.Errorf("check issue %q: %w", id, err)
@@ -65,8 +72,16 @@ func EnsureIssueIDAvailableInTx(ctx context.Context, tx DBTX, id string) error {
 //     envelope, a write-write conflict on Dolt, either way a retry that sees
 //     the created row.
 //
-// Sorted order means two writers locking overlapping shard sets this way
-// cannot deadlock each other.
+// Sorted order means two callers that each take ALL their cells in one call
+// cannot deadlock each other. A transaction that calls it more than once, with
+// cells it did not already take, can: it may hold a later shard while it waits
+// on an earlier one that a sorted locker holds while waiting on the later.
+// So a multi-id writer takes every id it already knows in one call before it
+// writes any of them (newCreateBatchCache, ApplyBatchInTx, a retaining sweep);
+// what remains is a generated id, minted mid-transaction, taking its own cell
+// afterwards. Postgres breaks such a cycle with 40P01 after deadlock_timeout,
+// which the SERIALIZABLE envelopes and the importer retry; Dolt has no lock
+// wait at all, only commit-time conflicts.
 func CoordinateIDCreatesInTx(ctx context.Context, tx DBTX, ids []string) error {
 	shards := map[string]bool{}
 	for _, id := range ids {
