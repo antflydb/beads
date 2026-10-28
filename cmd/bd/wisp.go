@@ -765,6 +765,7 @@ func runWispGC(cmd *cobra.Command, args []string) error {
 		excludeTypes = append(excludeTypes, types.IssueType(t))
 	}
 
+	warnIgnoredYAMLRetainedTypes()
 	if usesProxiedServer() {
 		return runWispGCProxiedServer(rootCtx, dryRun, ageThreshold, cleanAll, closedMode, force, excludeTypes)
 	}
