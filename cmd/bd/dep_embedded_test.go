@@ -413,6 +413,23 @@ func TestEmbeddedDepAAddRejectionsAndBulk(t *testing.T) {
 		}
 	})
 
+	// The notice says the edge was stored, so an edge refused after its
+	// target was accepted unverified gets none: --type is validated only
+	// once the target decision has run.
+	t.Run("add_unresolved_refused_type_no_warning", func(t *testing.T) {
+		src := bdCreate(t, bd, dir, "Unresolved target refused source", "--type", "task")
+		out := bdDepFail(t, bd, dir, "add", src.ID, "zz-407", "--type", "bogus")
+		if !strings.Contains(out, "unknown dependency type") {
+			t.Fatalf("output = %q, want the --type refusal", out)
+		}
+		if strings.Contains(out, "stored unverified") {
+			t.Errorf("output = %q, want no unresolved-target warning for an edge that was refused", out)
+		}
+		if got := bdShowDetails(t, bd, dir, src.ID)["dependency_count"]; got != float64(0) {
+			t.Fatalf("dependency_count = %v, want 0: the refused edge must not be stored", got)
+		}
+	})
+
 	t.Run("add_bulk_file_validation_no_partial_mutation", func(t *testing.T) {
 		v1 := bdCreate(t, bd, dir, "Bulk validation A", "--type", "task")
 		v2 := bdCreate(t, bd, dir, "Bulk validation B", "--type", "task")
