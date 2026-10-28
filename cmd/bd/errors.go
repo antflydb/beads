@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -57,17 +58,46 @@ func whereDiagHint() string {
 }
 
 // skippedUserGlobalBeadsNote returns the note naming the user-level beads
-// directory implicit discovery passed over (GH#4402), or "" when there is
-// nothing to name: no ancestor walk from the working directory reaches the
-// home directory, or <home>/.beads holds no workspace (a config.yaml-only
-// home directory is user configuration).
+// directory workspace discovery passed over (GH#4402), or "" when it passed
+// over none that holds a workspace (beads.SkippedUserGlobalBeadsDir).
 func skippedUserGlobalBeadsNote() string {
-	skipped := beads.SkippedUserGlobalBeadsDir()
-	if skipped == "" {
+	return userGlobalBeadsNote(runtime.GOOS, beads.SkippedUserGlobalBeadsDir())
+}
+
+// userGlobalBeadsNote is the note naming the skipped user-level directory dir
+// on goos, or "" when dir is "".
+//
+// It names BEADS_DIR for one command at a time, never as an export: BEADS_DIR
+// outranks every project's own .beads, so a shell that kept it exported
+// would send every project's writes to the global database. A POSIX shell
+// gets the per-command form to paste, with dir quoted for it
+// (remedy.CommandArg). cmd.exe and PowerShell have no per-command form, so
+// Windows gets the instruction alone.
+func userGlobalBeadsNote(goos, dir string) string {
+	if dir == "" {
 		return ""
 	}
-	return fmt.Sprintf("Note: %s is your user-level beads directory; bd does not use it outside a project\n"+
-		"      unless you name it: export BEADS_DIR=%s", skipped, skipped)
+	note := "Note: " + remedy.PrintedValue(dir) + " is your user-level beads directory; bd uses it outside a project\n" +
+		"      only when BEADS_DIR names it. Name it for each command that should use it"
+	if goos == "windows" {
+		note += "."
+	} else {
+		arg, argNote := remedy.CommandArg(goos, dir, "<dir>")
+		note += ":\n      BEADS_DIR=" + arg + " bd <command>" + argNote
+	}
+	return note + "\n      (an exported BEADS_DIR overrides every project's own .beads)"
+}
+
+// printNoDatabaseRefusal prints the refusal a command that needs a workspace
+// gets when discovery selects none, with the note naming the user-level
+// directory discovery passed over, if any.
+func printNoDatabaseRefusal() {
+	fmt.Fprintf(os.Stderr, "Error: no beads database found\n")
+	fmt.Fprintf(os.Stderr, "Hint: %s\n", diagHint())
+	fmt.Fprintf(os.Stderr, "      or set BEADS_DIR to point to your .beads directory\n")
+	if note := skippedUserGlobalBeadsNote(); note != "" {
+		fmt.Fprintln(os.Stderr, remedy.PrintedText(note))
+	}
 }
 
 func workspaceDiagHint(includeWhere bool) string {

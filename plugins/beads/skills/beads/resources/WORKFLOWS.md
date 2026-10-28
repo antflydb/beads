@@ -40,7 +40,7 @@ Session Start (when bd is available):
 
 **Pattern**: Always run `bd ready` when starting work where bd is available. Report status immediately to establish shared context.
 
-**Database selection**: bd auto-discovers which database to use by walking up from the working directory. The user-level `~/.beads` is never picked up implicitly — it is used only when named (`export BEADS_DIR=~/.beads`) or when `$HOME` itself is the repository root.
+**Database selection**: bd auto-discovers which database to use by walking up from the working directory. The user-level `~/.beads` is never picked up implicitly — it is used only when named for the command (`BEADS_DIR=~/.beads bd ready --json`) or when the home directory itself is the repository root. Do not export `BEADS_DIR` for this: an exported `BEADS_DIR` overrides every project's own `.beads`.
 
 ---
 
