@@ -339,3 +339,24 @@ Gas City's own SQLite binding held its five orchestration classes. The trial's
 context returned source evidence, promoted entity/event identities, and native
 memory recall. The trial also exposed and fixed lifecycle scope/prefix handling
 and an immutable JSON escape/hash mismatch that the earlier CLI smoke suite had missed.
+
+## Gas City native infrastructure transport
+
+`backend/antfly.OpenSnapshot` exposes a narrow generic JSON snapshot transport
+for callers with their own domain schema. It uses the same embedded/remote
+conditional publication and immutable row storage as the core backend, without
+issue lifecycle validation or issue/KG projections. Caller field names are
+encoded into a separate row namespace, including names such as issues, events,
+comments and leases. A caller must provision a dedicated workspace, validate its
+own schema identity, and reconcile unknown publication outcomes. Only
+`ErrSnapshotConflict` means a commit was positively rejected.
+
+Gas City's `antfly-beads` provider uses this transport for sessions, graph,
+messaging, orders and nudges. It composes Gas City's domain semantics inside
+one snapshot transaction; it does not route infrastructure through the work
+issue API or a SQLite mirror. Core work and its memory/entity/knowledge outbox
+continue to use the existing Beads Antfly workspace.
+
+Validation: the real ABI-3 AntflyLite generic snapshot test passes with a
+workspace larger than 4 MiB, byte-sensitive content and stale-CAS rejection.
+Row/snapshot/branch regression tests also pass with race instrumentation.

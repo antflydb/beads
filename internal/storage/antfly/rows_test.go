@@ -197,3 +197,31 @@ func TestImmutableLegacyHTMLEscapesRemainVerifiable(t *testing.T) {
 		t.Fatal("corrupt legacy record accepted")
 	}
 }
+
+func TestGenericSnapshotPreservesCallerSchema(t *testing.T) {
+	ctx := context.Background()
+	tr, service := testRows()
+	tr.domainProjection = false
+	data := []byte(`{"issues":{"a":{"custom":true}},"comments":{"x":"opaque"},"leases":{"y":3},"events":["one","two"],"a/b":{"key/with/slash":{"v":"<exact> & ->"}},"empty":{},"nil":null}`)
+	if err := tr.CompareAndSwap(ctx, 0, data); err != nil {
+		t.Fatal(err)
+	}
+	actual, version, err := tr.Load(ctx)
+	if err != nil || !sameJSON(actual, data) {
+		t.Fatalf("caller schema changed: %s %v", actual, err)
+	}
+	// Generic writes must not emit core issue projections.
+	for key := range service.docs {
+		if strings.HasPrefix(key, "bead:") {
+			t.Fatalf("unexpected domain projection %s", key)
+		}
+	}
+	service.failPublish = true
+	if err = tr.CompareAndSwap(ctx, version, []byte(`{"new":"unpublished"}`)); !errors.Is(err, errIndeterminate) {
+		t.Fatal(err)
+	}
+	actual, _, err = tr.Load(ctx)
+	if err != nil || !sameJSON(actual, data) {
+		t.Fatalf("partial publication: %s %v", actual, err)
+	}
+}

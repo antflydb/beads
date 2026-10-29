@@ -315,3 +315,38 @@ func (f *lostObservationTransport) Memory(ctx context.Context, space, action, ke
 	}
 	return out, err
 }
+
+func TestNativeGenericSnapshot(t *testing.T) {
+	library := os.Getenv("ANTFLY_TEST_LIBRARY")
+	if library == "" {
+		t.Skip("ANTFLY_TEST_LIBRARY is required for native snapshots")
+	}
+	ctx := context.Background()
+	target := Target{Path: filepath.Join(t.TempDir(), "generic.aflite"), Library: library, Table: "control", Workspace: "gascity"}
+	transport, err := OpenSnapshot(ctx, target, backends.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transport.Close() }()
+	values := map[string]string{}
+	for _, key := range []string{"a", "b", "c", "d", "e"} {
+		values[key] = strings.Repeat("<exact> & -> ", 100000)
+	}
+	data, _ := json.Marshal(map[string]any{"schema": "gascity", "records": values})
+	if len(data) <= maxStateBytes {
+		t.Fatal("fixture does not exceed aggregate limit")
+	}
+	if err = transport.CompareAndSwap(ctx, 0, data); err != nil {
+		t.Fatal(err)
+	}
+	restored, version, err := transport.Load(ctx)
+	if err != nil || !jsonEqual(restored, data) {
+		t.Fatalf("generic snapshot lost data: %v", err)
+	}
+	if err = transport.CompareAndSwap(ctx, 0, data); !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("stale publication: %v", err)
+	}
+	if err = transport.CompareAndSwap(ctx, version, data); err != nil {
+		t.Fatal(err)
+	}
+}

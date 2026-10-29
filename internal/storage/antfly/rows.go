@@ -33,11 +33,12 @@ type storedRow struct {
 }
 type rowTransport struct {
 	documentTransport
-	workspace string
+	workspace        string
+	domainProjection bool
 }
 
 func newRowTransport(t Transport, workspace string) Transport {
-	return &rowTransport{documentTransport: t.(documentTransport), workspace: workspace}
+	return &rowTransport{documentTransport: t.(documentTransport), workspace: workspace, domainProjection: true}
 }
 func underlyingTransport(t Transport) Transport {
 	if rows, ok := t.(*rowTransport); ok {
@@ -194,7 +195,10 @@ func splitState(data []byte) (map[string]json.RawMessage, map[string]json.RawMes
 	}
 	return fields, rows, nil
 }
-func joinState(fields, rows map[string]json.RawMessage) ([]byte, error) {
+func joinState(fields, rows map[string]json.RawMessage, domainProjection bool) ([]byte, error) {
+	if !domainProjection {
+		return joinSnapshot(fields, rows)
+	}
 	object := map[string]json.RawMessage{}
 	for k, v := range fields {
 		object[k] = v
@@ -265,12 +269,14 @@ func joinState(fields, rows map[string]json.RawMessage) ([]byte, error) {
 	for kind, entries := range maps {
 		object[kind], _ = json.Marshal(entries)
 	}
-	for _, kind := range []string{"issues", "edges", "notes", "config"} {
-		if _, ok := object[kind]; !ok {
-			object[kind] = json.RawMessage(`{}`)
+	if domainProjection {
+		for _, kind := range []string{"issues", "edges", "notes", "config"} {
+			if _, ok := object[kind]; !ok {
+				object[kind] = json.RawMessage(`{}`)
+			}
 		}
 	}
-	if len(events) > 0 || fields["events"] == nil {
+	if len(events) > 0 || (domainProjection && fields["events"] == nil) {
 		object["events"], _ = json.Marshal(events)
 	}
 	return json.Marshal(object)
@@ -306,7 +312,7 @@ func (r *rowTransport) Load(ctx context.Context) ([]byte, uint64, error) {
 		}
 		rows[id] = row.Value
 	}
-	data, err := joinState(head.Fields, rows)
+	data, err := joinState(head.Fields, rows, r.domainProjection)
 	return data, v, err
 }
 func (r *rowTransport) CompareAndSwap(ctx context.Context, version uint64, data []byte) error {
@@ -334,7 +340,11 @@ func (r *rowTransport) compareAndSwapFrom(ctx context.Context, version uint64, d
 	if err != nil {
 		return err
 	}
-	fields, rows, err := splitState(data)
+	split := splitState
+	if !r.domainProjection {
+		split = splitSnapshot
+	}
+	fields, rows, err := split(data)
 	if err != nil {
 		return err
 	}
@@ -448,14 +458,17 @@ func (r *rowTransport) compareAndSwapFrom(ctx context.Context, version uint64, d
 		}
 	}
 	// Materialized ordinary documents are published with the head, never early.
-	projections, err := projections(r.workspace, data)
-	if err != nil {
-		return err
+	projected := map[string]json.RawMessage{}
+	if r.domainProjection {
+		projected, err = projections(r.workspace, data)
+		if err != nil {
+			return err
+		}
 	}
 	publish := map[string]json.RawMessage{r.workspace: encoded}
 	for id := range changedIssues {
 		key := ProjectionKey(r.workspace, id)
-		if doc, ok := projections[key]; ok {
+		if doc, ok := projected[key]; ok {
 			publish[key] = doc
 		} else {
 			publish[key] = json.RawMessage(`{"beads_document_type":"deleted","_edges":{"beads":{}}}`)

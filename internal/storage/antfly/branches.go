@@ -263,7 +263,7 @@ func (r *rowTransport) restoreSnapshot(ctx context.Context, snapshot []byte) ([]
 		}
 		values[id] = row.Value
 	}
-	return joinState(head.Fields, values)
+	return joinState(head.Fields, values, r.domainProjection)
 }
 func (s *Store) MergeFork(ctx context.Context, name, key, actor string, dryRun bool) (out MergeResult, err error) {
 	if key == "" || strings.TrimSpace(actor) == "" {

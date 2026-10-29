@@ -62,3 +62,23 @@ func Open(ctx context.Context, dir string, opts backend.OpenOptions) (Workspace,
 func InitializeWith(ctx context.Context, dir string, target Target, prefix string, opts backend.OpenOptions) error {
 	return impl.InitializeWith(ctx, dir, target, prefix, opts)
 }
+
+// SnapshotTransport stores dedicated JSON snapshots using native OCC. Fields
+// whose values are objects become per-key immutable records, so the workspace
+// has no aggregate-document size limit. Each encoded record is bounded to 4 MiB.
+// Use a dedicated workspace and schema; do not open a Beads issue workspace here.
+type SnapshotTransport interface {
+	Load(context.Context) ([]byte, uint64, error)
+	CompareAndSwap(context.Context, uint64, []byte) error
+	Close() error
+}
+
+// ErrSnapshotConflict means publication was positively rejected and may be
+// retried against a freshly loaded snapshot. Other errors may be indeterminate.
+var ErrSnapshotConflict = impl.ErrSnapshotConflict
+
+// OpenSnapshot opens a native embedded or remote snapshot workspace. It creates
+// the backing table if absent and preserves caller-owned credentials and clients.
+func OpenSnapshot(ctx context.Context, target Target, opts backend.OpenOptions) (SnapshotTransport, error) {
+	return impl.OpenSnapshot(ctx, target, opts)
+}
