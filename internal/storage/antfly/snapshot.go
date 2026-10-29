@@ -23,6 +23,7 @@ func OpenSnapshot(ctx context.Context, target Target, opts backends.OpenOptions)
 	}
 	rows := tr.(*rowTransport)
 	rows.domainProjection = false
+	rows.cacheReads = true
 	return rows, nil
 }
 

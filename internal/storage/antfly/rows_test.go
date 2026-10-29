@@ -16,6 +16,7 @@ type documentService struct {
 	docs        map[string][]byte
 	versions    map[string]uint64
 	clock       uint64
+	reads       int
 	anchor      string
 	failPublish bool
 }
@@ -26,6 +27,7 @@ func (s *documentService) Load(ctx context.Context) ([]byte, uint64, error) {
 func (s *documentService) ReadDocument(_ context.Context, key string) ([]byte, uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	return append([]byte(nil), s.docs[key]...), s.versions[key], nil
 }
 func (s *documentService) WriteDocuments(_ context.Context, v *uint64, docs map[string]json.RawMessage) error {
@@ -223,5 +225,42 @@ func TestGenericSnapshotPreservesCallerSchema(t *testing.T) {
 	actual, _, err = tr.Load(ctx)
 	if err != nil || !sameJSON(actual, data) {
 		t.Fatalf("partial publication: %s %v", actual, err)
+	}
+}
+
+func TestGenericSnapshotCacheFollowsHeadAndDoesNotAlias(t *testing.T) {
+	ctx := context.Background()
+	tr, service := testRows()
+	tr.domainProjection = false
+	tr.cacheReads = true
+	original := []byte(`{"schema":"generic","records":{"a":{"value":"first"},"b":{"value":"stable"}}}`)
+	if err := tr.CompareAndSwap(ctx, 0, original); err != nil {
+		t.Fatal(err)
+	}
+	first, v, err := tr.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.mu.Lock()
+	reads := service.reads
+	service.mu.Unlock()
+	first[0] = '!'
+	again, _, err := tr.Load(ctx)
+	if err != nil || !sameJSON(again, original) {
+		t.Fatalf("caller mutated cached snapshot: %s %v", again, err)
+	}
+	service.mu.Lock()
+	delta := service.reads - reads
+	service.mu.Unlock()
+	if delta != 1 {
+		t.Fatalf("unchanged snapshot read %d documents, want only fresh head", delta)
+	}
+	changed := []byte(`{"schema":"generic","records":{"a":{"value":"next"},"b":{"value":"stable"}}}`)
+	if err = tr.CompareAndSwap(ctx, v, changed); err != nil {
+		t.Fatal(err)
+	}
+	actual, _, err := tr.Load(ctx)
+	if err != nil || !sameJSON(actual, changed) {
+		t.Fatalf("cache hid publication: %s %v", actual, err)
 	}
 }

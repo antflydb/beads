@@ -367,3 +367,12 @@ They use the same guarded lifecycle as ordinary work. This does not enable
 arbitrary custom types, session/message infrastructure, gates or molecules in
 the work workspace. The convoy regression was reproduced during the native
 factory run and passes with the row/lifecycle regression suite.
+
+Generic snapshots retain a bounded per-handle read cache: up to 8 MiB / 2048
+hash-verified immutable records and one reconstructed snapshot up to 16 MiB.
+Every load still reads and compares the live conditional head; cached caller
+buffers are copied, so mutations cannot alter later reads. This removes the
+repeated native per-record reads that made the real Gas City controller slow.
+Internal content-addressed records are append-only; editing or deleting them
+behind a live head is outside the snapshot protocol. Core work transport keeps
+its original uncached integrity-checking behavior.

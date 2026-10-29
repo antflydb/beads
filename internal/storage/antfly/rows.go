@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // documentTransport is the engine boundary. Nil version writes only immutable
@@ -33,8 +34,15 @@ type storedRow struct {
 }
 type rowTransport struct {
 	documentTransport
-	workspace        string
-	domainProjection bool
+	workspace              string
+	domainProjection       bool
+	cacheReads             bool
+	cacheMu                sync.Mutex
+	immutableCache         map[string][]byte
+	immutableOrder         []string
+	immutableBytes         int
+	cachedHead, cachedData []byte
+	cachedVersion          uint64
 }
 
 func newRowTransport(t Transport, workspace string) Transport {
@@ -63,7 +71,46 @@ func readRowHead(b []byte) (*rowHead, error) {
 	}
 	return &head, nil
 }
+
+// Generic snapshots are append-only at their internal content addresses. Cache
+// only hash-verified immutable bytes; publication is still fenced by a fresh
+// head read on every Load. The cache is bounded independently of workspace size.
 func (r *rowTransport) readImmutable(ctx context.Context, key string) ([]byte, error) {
+	if !r.cacheReads {
+		return r.readImmutableUncached(ctx, key)
+	}
+	r.cacheMu.Lock()
+	cached, ok := r.immutableCache[key]
+	r.cacheMu.Unlock()
+	if ok {
+		return bytes.Clone(cached), nil
+	}
+	data, err := r.readImmutableUncached(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	const budget = 8 << 20
+	if len(data) <= budget {
+		r.cacheMu.Lock()
+		if r.immutableCache == nil {
+			r.immutableCache = map[string][]byte{}
+		}
+		if _, exists := r.immutableCache[key]; !exists {
+			for len(r.immutableOrder) > 0 && (r.immutableBytes+len(data) > budget || len(r.immutableCache) >= 2048) {
+				old := r.immutableOrder[0]
+				r.immutableOrder = r.immutableOrder[1:]
+				r.immutableBytes -= len(r.immutableCache[old])
+				delete(r.immutableCache, old)
+			}
+			r.immutableCache[key] = bytes.Clone(data)
+			r.immutableOrder = append(r.immutableOrder, key)
+			r.immutableBytes += len(data)
+		}
+		r.cacheMu.Unlock()
+	}
+	return data, nil
+}
+func (r *rowTransport) readImmutableUncached(ctx context.Context, key string) ([]byte, error) {
 	b, _, err := r.ReadDocument(ctx, key)
 	if err != nil {
 		return nil, err
@@ -282,9 +329,22 @@ func joinState(fields, rows map[string]json.RawMessage, domainProjection bool) (
 	return json.Marshal(object)
 }
 func (r *rowTransport) Load(ctx context.Context) ([]byte, uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	b, v, err := r.documentTransport.Load(ctx)
 	if err != nil || len(b) == 0 {
 		return b, v, err
+	}
+	encodedHead := b
+	if r.cacheReads {
+		r.cacheMu.Lock()
+		if r.cachedVersion == v && len(r.cachedData) > 0 && bytes.Equal(r.cachedHead, encodedHead) {
+			data := bytes.Clone(r.cachedData)
+			r.cacheMu.Unlock()
+			return data, v, nil
+		}
+		r.cacheMu.Unlock()
 	}
 	head, err := readRowHead(b)
 	if err != nil {
@@ -313,6 +373,13 @@ func (r *rowTransport) Load(ctx context.Context) ([]byte, uint64, error) {
 		rows[id] = row.Value
 	}
 	data, err := joinState(head.Fields, rows, r.domainProjection)
+	if err == nil && r.cacheReads && len(data) <= 16<<20 {
+		r.cacheMu.Lock()
+		r.cachedHead = bytes.Clone(encodedHead)
+		r.cachedData = bytes.Clone(data)
+		r.cachedVersion = v
+		r.cacheMu.Unlock()
+	}
 	return data, v, err
 }
 func (r *rowTransport) CompareAndSwap(ctx context.Context, version uint64, data []byte) error {
