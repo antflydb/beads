@@ -360,3 +360,10 @@ continue to use the existing Beads Antfly workspace.
 Validation: the real ABI-3 AntflyLite generic snapshot test passes with a
 workspace larger than 4 MiB, byte-sensitive content and stale-CAS rejection.
 Row/snapshot/branch regression tests also pass with race instrumentation.
+
+The work lifecycle additionally accepts the fixed `convoy` and `merge-request`
+types used by Gas City for durable work grouping and integration requests.
+They use the same guarded lifecycle as ordinary work. This does not enable
+arbitrary custom types, session/message infrastructure, gates or molecules in
+the work workspace. The convoy regression was reproduced during the native
+factory run and passes with the row/lifecycle regression suite.

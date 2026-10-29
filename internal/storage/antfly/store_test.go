@@ -450,3 +450,18 @@ func TestAntflyReadyRespectsParentDeferralAndPaging(t *testing.T) {
 		t.Fatalf("include deferred: %v, %v", rows, err)
 	}
 }
+
+func TestAntflyFactoryWorkTypes(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	for _, kind := range []types.IssueType{"convoy", "merge-request"} {
+		created, err := (&lifecycle{s}).Create(ctx, issueops.CreateRequest{Issue: &types.Issue{Title: "Factory grouping", IssueType: kind, Priority: 2}, Actor: "factory"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = (&lifecycle{s}).Update(ctx, issueops.UpdateRequest{IssueID: created.Issue.ID, Actor: "factory", Patch: issueops.IssuePatch{Title: issueops.Field[string]{Set: true, Value: "Updated grouping"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}

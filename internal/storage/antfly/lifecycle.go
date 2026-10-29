@@ -18,12 +18,17 @@ import (
 	"github.com/steveyegge/beads/issueops"
 )
 
+// Gas City keeps convoys and merge requests in the durable work ledger.
+// These fixed work types share the ordinary lifecycle; runtime infrastructure
+// still belongs to the dedicated coordination workspace.
+func factoryWorkTypes() []string { return []string{"convoy", "merge-request"} }
+
 type lifecycle struct{ s *Store }
 
 func (l *lifecycle) Create(ctx context.Context, req issueops.CreateRequest) (out issueops.CreateResult, err error) {
 	req = storageops.CloneCreateRequest(req)
 	err = l.s.mutate(ctx, func(st *state) error {
-		attempt, e := storageops.PreparePublicCreateRequest(req, storageops.PublicCreateContext{IssuePrefix: st.Config["issue_prefix"]})
+		attempt, e := storageops.PreparePublicCreateRequest(req, storageops.PublicCreateContext{IssuePrefix: st.Config["issue_prefix"], CustomTypes: factoryWorkTypes()})
 		if e != nil {
 			return e
 		}
@@ -155,7 +160,7 @@ func (l *lifecycle) Update(ctx context.Context, req issueops.UpdateRequest) (out
 		if domain.IsInfraType(i.IssueType) || i.IssueType == types.TypeGate || i.IssueType == types.TypeMolecule {
 			return errUnsupported("Lifecycle.Update: infrastructure, gate, or molecule type")
 		}
-		if e = i.Validate(); e != nil {
+		if e = i.ValidateWithCustom(nil, factoryWorkTypes()); e != nil {
 			return fmt.Errorf("%w: %v", storage.ErrValidation, e)
 		}
 		labels := i.Labels
