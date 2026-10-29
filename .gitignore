@@ -1,4 +1,6 @@
 # Binaries
+/.bazel-cache/
+/.tools/
 /beads
 /bd
 *.exe

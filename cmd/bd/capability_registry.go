@@ -523,6 +523,7 @@ var proxyPermittedPaths = []string{
 	"upgrade ack", "upgrade review", "upgrade status",
 
 	// workspace lifecycle and configuration
+	"antfly init", "antfly memory",
 	"bootstrap", "config apply", "config drift", "config get", "config list", "config set",
 	"config set-many", "config show", "config unset", "config validate", "connect", "context",
 	"init", "init-safety", "onboard", "preflight", "quickstart", "schema", "setup", "where",

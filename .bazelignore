@@ -8,3 +8,5 @@ node_modules
 dist
 .runtime
 tmp
+.bazel-cache
+.tools

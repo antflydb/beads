@@ -147,6 +147,7 @@ filegroup(
     name = "tree_go_srcs",
     srcs = [
         ":go_srcs",
+        "//internal/storage/antfly:go_srcs",
         "//internal/storage/backendnames:go_srcs",
         "//internal/storage/backends:go_srcs",
         "//internal/storage/batchbench:go_srcs",

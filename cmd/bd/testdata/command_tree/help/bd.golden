@@ -70,6 +70,7 @@ Sync & Data:
   vc                Version control operations
 
 Setup & Configuration:
+  antfly            Configure native Antfly storage and access its memory service
   bootstrap         Non-destructive database setup for fresh clones and recovery
   config            Manage configuration settings
   connect           Attach this workspace to a remote bd serve over HTTP

@@ -177,6 +177,7 @@ release_cross_build(
     targets = [
         ":pure_bd_has_no_cgo_only_deps",
         "//:beads",
+        "//backend/antfly:antfly",
         "//backend/conformance:conformance",
         "//backend/http:http",
         "//backend:backend",
@@ -239,6 +240,7 @@ release_cross_build(
         "//internal/remedy:remedy",
         "//internal/remotecache:remotecache",
         "//internal/routing:routing",
+        "//internal/storage/antfly:antfly",
         "//internal/storage/backendnames:backendnames",
         "//internal/storage/backends:backends",
         "//internal/storage/batchbench:batchbench",

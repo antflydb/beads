@@ -259,6 +259,37 @@ bd ado sync
   flag --states type=string default="" usage="Filter to ADO states, comma-separated (e.g., \"New,Active,Resolved\")"
   flag --types type=string default="" usage="Filter to work item types, comma-separated (e.g., \"Bug,Task,User Story\")"
 
+bd antfly
+  use: "antfly"
+  short: "Configure native Antfly storage and access its memory service"
+  group: "setup"
+  hidden: false
+  runnable: false
+  annotations: {bd:skip_store="1"}
+
+bd antfly init
+  use: "init"
+  short: "Create or attach an Antfly workspace"
+  hidden: false
+  runnable: true
+  flag --database type=string default="default" usage="Antfly database"
+  flag --library type=string default="" usage="Path to libantfly shared library (or ANTFLY_LIBRARY_PATH)"
+  flag --namespace type=string default="public" usage="Antfly namespace"
+  flag --path type=string default="" usage="Embedded .aflite database path (default .beads/antfly.aflite)"
+  flag --prefix type=string default="bd" usage="Issue ID prefix"
+  flag --table type=string default="beads_workspaces" usage="Antfly table"
+  flag --token-env type=string default="" usage="Environment variable containing the remote bearer token"
+  flag --url type=string default="" usage="Antfly server origin, for example http://127.0.0.1:8080"
+  flag --workspace type=string default="default" usage="Workspace key within the table"
+
+bd antfly memory
+  use: "memory <create|observe|recall|forget>"
+  short: "Call native Antfly memory with a JSON body from stdin"
+  hidden: false
+  runnable: true
+  flag --idempotency-key type=string default="" usage="Stable operation key, required for mutations"
+  flag --space type=string default="" usage="Memory space (default derived from workspace routing)"
+
 bd assign
   use: "assign <id> <name>"
   short: "Assign an issue to someone"

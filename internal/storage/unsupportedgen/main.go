@@ -48,6 +48,7 @@ import (
 // look up a type by its source name at runtime.
 var registry = map[string]reflect.Type{
 	"DoltStorage": reflect.TypeOf((*storage.DoltStorage)(nil)).Elem(),
+	"Transaction": reflect.TypeOf((*storage.Transaction)(nil)).Elem(),
 }
 
 func main() {
