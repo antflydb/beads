@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/backends"
+	storageops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/workapi/storeversionreconciler"
 	"github.com/steveyegge/beads/internal/workapi/storeworkspaceconfig"
@@ -22,18 +23,20 @@ import (
 
 var errIndeterminate = storage.ErrCommitIndeterminate
 
-// The initial backend uses one bounded aggregate per workspace. A conditional
-// write publishes issues, edges, notes and audit events together. This favors
-// a small, correct integration over pretending a set of remote row writes is
-// a transaction. ANTFLY_INTEGRATION.md specifies the row-oriented successor.
+// State is a transaction-local domain view. Separate immutable rows are
+// published with one workspace OCC fence by the transport.
 type state struct {
-	Format   int                          `json:"format"`
-	Revision uint64                       `json:"revision"`
-	Config   map[string]string            `json:"config"`
-	Issues   map[string]*record           `json:"issues"`
-	Edges    map[string]*types.Dependency `json:"edges"`
-	Notes    map[string]string            `json:"notes"`
-	Events   []event                      `json:"events"`
+	Branches           map[string]Branch            `json:"branches"`
+	Integrations       map[string]Integration       `json:"integrations"`
+	Knowledge          *KnowledgeState              `json:"knowledge,omitempty"`
+	KnowledgePreparing *KnowledgePreparation        `json:"knowledge_preparing,omitempty"`
+	Format             int                          `json:"format"`
+	Revision           uint64                       `json:"revision"`
+	Config             map[string]string            `json:"config"`
+	Issues             map[string]*record           `json:"issues"`
+	Edges              map[string]*types.Dependency `json:"edges"`
+	Notes              map[string]string            `json:"notes"`
+	Events             []event                      `json:"events"`
 }
 
 type record struct {
@@ -47,15 +50,26 @@ type event struct {
 	Actor     string       `json:"actor"`
 	At        time.Time    `json:"at"`
 	Issue     *types.Issue `json:"issue,omitempty"`
+	Content   string       `json:"content,omitempty"`
 }
 
+func (st *state) initialize() {
+	if st.Branches == nil {
+		st.Branches = map[string]Branch{}
+	}
+	if st.Integrations == nil {
+		st.Integrations = map[string]Integration{}
+	}
+}
 func emptyState() *state {
-	return &state{Format: 1, Config: map[string]string{}, Issues: map[string]*record{}, Edges: map[string]*types.Dependency{}, Notes: map[string]string{}}
+	return &state{Branches: map[string]Branch{}, Integrations: map[string]Integration{}, Format: 1, Config: map[string]string{}, Issues: map[string]*record{}, Edges: map[string]*types.Dependency{}, Notes: map[string]string{}}
 }
 
 type Store struct {
 	unsupportedDoltStorage
 	transport       Transport
+	target          *Target
+	openOptions     backends.OpenOptions
 	readOnly        bool
 	localDir        string
 	expectedProject string
@@ -73,20 +87,25 @@ func New(transport Transport, readOnly bool) *Store {
 // OpenReadOnly is the classified-command hook, which must allow ready --claim.
 // A caller that needs a write-refusing store can use New(transport, true).
 func Register() {
-	backends.Register(Backend, backends.Backend{Open: openWorkspace, OpenReadOnly: openWorkspace, WorkspaceIsBeadsDir: true})
+	backends.Register(Backend, backends.Backend{Open: openWorkspace, OpenReadOnly: openWorkspace, OpenWith: openWorkspaceWith, WorkspaceIsBeadsDir: true})
 }
 
 func openWorkspace(ctx context.Context, dir string) (storage.DoltStorage, error) {
+	return openWorkspaceWith(ctx, dir, backends.OpenOptions{})
+}
+func openWorkspaceWith(ctx context.Context, dir string, opts backends.OpenOptions) (storage.DoltStorage, error) {
 	t, err := LoadTarget(dir)
 	if err != nil {
 		return nil, err
 	}
-	transport, err := OpenTransport(t)
+	transport, err := OpenTransportWith(t, opts)
 	if err != nil {
 		return nil, err
 	}
 	s := New(transport, false)
 	s.localDir = dir
+	s.target = &t
+	s.openOptions = opts
 	cfg, err := configfile.LoadForDiscovery(dir)
 	if err != nil || cfg == nil || cfg.Backend != Backend || cfg.ProjectID == "" {
 		_ = transport.Close()
@@ -128,6 +147,7 @@ func (s *Store) load(ctx context.Context) (*state, uint64, error) {
 	if err = json.Unmarshal(b, st); err != nil {
 		return nil, 0, fmt.Errorf("decode Antfly workspace: %w", err)
 	}
+	st.initialize()
 	if st.Format != 1 || st.Config == nil || st.Issues == nil || st.Edges == nil || st.Notes == nil {
 		return nil, 0, errors.New("unsupported or corrupt Antfly workspace format")
 	}
@@ -176,9 +196,6 @@ func (s *Store) mutate(ctx context.Context, fn func(*state) error) error {
 		after, err = json.Marshal(st)
 		if err != nil {
 			return err
-		}
-		if len(after) > maxStateBytes {
-			return errors.New("Antfly workspace exceeds the experimental 4 MiB aggregate limit; no changes committed")
 		}
 		err = s.transport.CompareAndSwap(ctx, v, after)
 		if !errors.Is(err, errConflict) {
@@ -258,7 +275,7 @@ func (s *Store) Commenter() (issueops.Commenter, error)               { return &
 
 // Memory calls the native service without changing the exact keyed-note plane.
 func (s *Store) Memory(ctx context.Context, space, action, key string, body json.RawMessage) (json.RawMessage, error) {
-	if s.readOnly && action != "recall" {
+	if s.readOnly && action != "recall" && action != "inspect" {
 		return nil, errors.New("Antfly store is read-only")
 	}
 	if _, _, err := s.load(ctx); err != nil {
@@ -270,7 +287,7 @@ func (s *Store) Memory(ctx context.Context, space, action, key string, body json
 	if space == "" {
 		return nil, errors.New("memory space is required for a caller-owned transport")
 	}
-	if action != "recall" && key == "" {
+	if action != "recall" && action != "inspect" && key == "" {
 		return nil, errors.New("memory mutations require an idempotency key")
 	}
 	return s.transport.Memory(ctx, space, action, key, body)
@@ -285,11 +302,14 @@ func (st *state) issue(id string) (*types.Issue, error) {
 }
 func (st *state) audit(op, id, actor string) {
 	e := event{Sequence: uint64(len(st.Events) + 1), Operation: op, ID: id, Actor: actor, At: time.Now().UTC()}
-	if r := st.Issues[id]; r != nil {
+	if r := st.Issues[id]; r != nil && !storageops.IsWisp(&r.Issue) && !r.Issue.NoHistory {
 		b, _ := json.Marshal(r.Issue)
 		var issue types.Issue
 		_ = json.Unmarshal(b, &issue)
 		e.Issue = &issue
+	}
+	if op == "remember" {
+		e.Content = st.Notes[id]
 	}
 	st.Events = append(st.Events, e)
 }
@@ -334,4 +354,18 @@ func MemoryWorkspace(ctx context.Context, dir, space, action, key string, body j
 
 func resolved(status types.Status) bool {
 	return status == types.StatusClosed || status == types.StatusPinned
+}
+
+func OpenStore(ctx context.Context, dir string, opts backends.OpenOptions) (*Store, error) {
+	raw, err := openWorkspaceWith(ctx, dir, opts)
+	if err != nil {
+		return nil, err
+	}
+	return raw.(*Store), nil
+}
+func (s *Store) openTarget(ctx context.Context, target Target, provision bool) (Transport, error) {
+	if provision {
+		return ensureTableWith(ctx, target, s.openOptions)
+	}
+	return OpenTransportWith(target, s.openOptions)
 }

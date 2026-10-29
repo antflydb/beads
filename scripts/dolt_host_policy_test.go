@@ -47,6 +47,7 @@ const doltHostClassifierFile = "internal/configfile/dolt_host.go"
 // configfile.IsLocalHostString, by "file:declaration". Each asks whether a
 // host is this machine, not whether bd runs a Dolt server there.
 var isLocalHostStringCallers = map[string]string{
+	"internal/storage/antfly/transport.go:Validate":                            "Antfly HTTP plaintext guard; this checks machine locality, never Dolt ownership",
 	"internal/configfile/configfile.go:HostImpliesServerMode":                  "GH#3545 mode inference: a host on another machine implies server mode",
 	"internal/httpclient/credential.go:NewBearerProvider":                      "HTTP plaintext-credential guard (not a Dolt host)",
 	"internal/httpclient/insecure_credential_guard.go:guardInsecureCredential": "HTTP plaintext-credential guard (not a Dolt host)",

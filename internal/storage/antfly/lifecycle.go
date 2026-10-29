@@ -28,7 +28,13 @@ func (l *lifecycle) Create(ctx context.Context, req issueops.CreateRequest) (out
 			return e
 		}
 		i := attempt.Issue
-		if domain.IsInfraType(i.IssueType) || i.IssueType == types.TypeGate || i.IssueType == types.TypeMolecule || i.Ephemeral || i.NoHistory || i.IsTemplate || i.WispType != "" || i.AwaitType != "" || i.MolType != "" || attempt.WaitsFor != nil {
+		if st.Config["antfly.branch.parent"] != "" && storageops.IsWisp(i) {
+			return errUnsupported("Create: runtime wisps belong in main")
+		}
+		if st.Config["antfly.branch.parent"] != "" && (i.Assignee != "" || i.Status == types.StatusInProgress) {
+			return errUnsupported("Create: live claims belong in main")
+		}
+		if domain.IsInfraType(i.IssueType) || i.IssueType == types.TypeGate || i.IssueType == types.TypeMolecule || i.IsTemplate || i.WispType != "" || i.AwaitType != "" || i.MolType != "" || attempt.WaitsFor != nil {
 			return errUnsupported("Lifecycle.Create: ephemeral, template, gate, molecule, or waits-for")
 		}
 		if i.ID == "" {
@@ -89,6 +95,9 @@ func (l *lifecycle) Update(ctx context.Context, req issueops.UpdateRequest) (out
 		return out, errUnsupported("Lifecycle.Update: persistence or gate")
 	}
 	err = l.s.mutate(ctx, func(st *state) error {
+		if st.Config["antfly.branch.parent"] != "" && (req.Claim || req.Patch.Assignee.Set || (req.Patch.Status.Set && req.Patch.Status.Value == types.StatusInProgress)) {
+			return errUnsupported("Update: live claims belong in main")
+		}
 		i, e := st.issue(req.IssueID)
 		if e != nil {
 			return e
@@ -309,6 +318,12 @@ func (l *lifecycle) Reopen(ctx context.Context, req issueops.ReopenRequest) (out
 }
 
 func (st *state) claim(i *types.Issue, actor string) (bool, error) {
+	if storageops.IsWisp(i) {
+		return false, storage.ErrNotFound
+	}
+	if err := mainClaims(st); err != nil {
+		return false, err
+	}
 	if i.Assignee != "" && i.Assignee != actor {
 		return false, &issueops.ClaimConflictError{IssueID: i.ID, Assignee: i.Assignee, Status: i.Status, Err: fmt.Errorf("%w by %s", storage.ErrAlreadyClaimed, i.Assignee)}
 	}
@@ -367,6 +382,13 @@ func (s *Store) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	}
 	return st.hydrate(id), nil
 }
-func (s *Store) GetWisp(context.Context, string) (*types.Issue, error) {
-	return nil, storage.ErrNotFound
+func (s *Store) GetWisp(ctx context.Context, id string) (*types.Issue, error) {
+	i, err := s.GetIssue(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !storageops.IsWisp(i) {
+		return nil, storage.ErrNotFound
+	}
+	return i, nil
 }

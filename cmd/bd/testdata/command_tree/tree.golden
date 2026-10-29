@@ -267,6 +267,40 @@ bd antfly
   runnable: false
   annotations: {bd:skip_store="1"}
 
+bd antfly branch
+  use: "branch"
+  short: "Create immutable workspace snapshots and merge isolated work"
+  hidden: false
+  runnable: false
+
+bd antfly branch create
+  use: "create <name>"
+  short: "Create a branch checkout from a consistent workspace snapshot"
+  hidden: false
+  runnable: true
+
+bd antfly branch list
+  use: "list"
+  short: "List branch snapshots"
+  hidden: false
+  runnable: true
+
+bd antfly branch merge
+  use: "merge <name>"
+  short: "Integrate branch changes with three-way conflict checks"
+  hidden: false
+  runnable: true
+  flag --dry-run type=bool default="false" usage="Report conflicts without changing main"
+  flag --idempotency-key type=string default="" usage="Stable integration key, required even for a preview"
+
+bd antfly context
+  use: "context <query>"
+  short: "Return cited work, memory and graph context under a token budget"
+  hidden: false
+  runnable: true
+  flag --limit type=int default="10" usage="Maximum matches from each source"
+  flag --max-tokens type=int default="4096" usage="Maximum context budget"
+
 bd antfly init
   use: "init"
   short: "Create or attach an Antfly workspace"
@@ -282,13 +316,108 @@ bd antfly init
   flag --url type=string default="" usage="Antfly server origin, for example http://127.0.0.1:8080"
   flag --workspace type=string default="default" usage="Workspace key within the table"
 
+bd antfly knowledge
+  use: "knowledge"
+  short: "Project source events into native memory and entity resolution"
+  hidden: false
+  runnable: false
+
+bd antfly knowledge configure
+  use: "configure"
+  short: "Configure memory and knowledge indexes from JSON on stdin"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge curation
+  use: "curation <resolver>"
+  short: "Inspect persistent resolver curation"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge mapping
+  use: "mapping <canonical-key>"
+  short: "Show the explicit graph-to-memory entity identity mapping"
+  hidden: false
+  runnable: true
+  flag --table type=string default="" usage="Canonical entity table (default the workspace entity table)"
+
+bd antfly knowledge merge
+  use: "merge <resolver>"
+  short: "Apply an explicitly reviewed entity merge"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge query
+  use: "query"
+  short: "Search knowledge using a native Antfly JSON query"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge render
+  use: "render <resolver>"
+  short: "Render a canonical entity identity"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge resolve
+  use: "resolve <resolver>"
+  short: "Resolve entities using the configured resolver"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge review
+  use: "review <resolver/review-id>"
+  short: "Decide an identity proposal with native revision guards"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge reviews
+  use: "reviews <resolver>"
+  short: "List unresolved identity proposals"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge status
+  use: "status"
+  short: "Show consumer progress and knowledge destinations"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge suppress
+  use: "suppress <resolver>"
+  short: "Suppress or unsuppress canonical entity identities"
+  hidden: false
+  runnable: true
+
+bd antfly knowledge sync
+  use: "sync"
+  short: "Replay committed source events through the durable consumer"
+  hidden: false
+  runnable: true
+  flag --limit type=int default="100" usage="Maximum source events to process"
+
+bd antfly knowledge watch
+  use: "watch"
+  short: "Continuously project new source events until interrupted"
+  hidden: false
+  runnable: true
+  flag --interval type=duration default="2s" usage="Delay between consumer iterations"
+  flag --limit type=int default="100" usage="Maximum source events per iteration"
+
 bd antfly memory
-  use: "memory <create|observe|recall|forget>"
+  use: "memory <create|inspect|configure|observe|recall|correct|curate-entity|outcome|forget>"
   short: "Call native Antfly memory with a JSON body from stdin"
   hidden: false
   runnable: true
   flag --idempotency-key type=string default="" usage="Stable operation key, required for mutations"
   flag --space type=string default="" usage="Memory space (default derived from workspace routing)"
+
+bd antfly provider
+  use: "provider <operation> [arguments...]"
+  short: "Serve the Gas City executable Beads provider protocol"
+  hidden: false
+  runnable: true
+  disable-flag-parsing: true
 
 bd assign
   use: "assign <id> <name>"

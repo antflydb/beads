@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Gas City executable Beads provider backed by the Antfly-enabled bd build."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+DATA_OPERATIONS = {
+    "create", "get", "update", "close", "reopen", "delete", "list", "children",
+    "list-by-label", "ready", "set-metadata", "dep-add", "dep-remove", "dep-list",
+}
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("usage: gc-beads-antfly <operation> [arguments...]", file=sys.stderr)
+        return 1
+    operation = sys.argv[1]
+    if operation in {"stop", "shutdown"}:
+        return 2  # Embedded handles close per call; remote servers are externally owned.
+    lifecycle = {"init", "start", "ensure-ready", "health", "probe", "recover"}
+    if operation not in DATA_OPERATIONS | lifecycle:
+        return 2
+    root = os.environ.get("GC_STORE_ROOT")
+    if not root:
+        print("GC_STORE_ROOT is required", file=sys.stderr)
+        return 1
+    root = Path(root).resolve()
+    if not root.is_dir():
+        print("GC_STORE_ROOT must name an existing scope directory", file=sys.stderr)
+        return 1
+    environment = dict(os.environ)
+    environment["BEADS_DIR"] = str(root / ".beads")
+    binary = environment.get("ANTFLY_BD_BIN", "bd")
+
+    def call(arguments, **kwargs):
+        return subprocess.run([binary, *arguments], cwd=root, env=environment,
+                              timeout=28, check=False, **kwargs)
+
+    if operation in {"init", "start", "ensure-ready"}:
+        metadata = root / ".beads" / "metadata.json"
+        if metadata.exists():
+            with metadata.open() as stream:
+                if json.load(stream).get("backend") != "antfly":
+                    print("scope already selects another Beads backend", file=sys.stderr)
+                    return 1
+        else:
+            arguments = ["antfly", "init", "--prefix", environment.get("GC_BEADS_PREFIX", "bd")]
+            endpoint = environment.get("GC_ANTFLY_URL")
+            if endpoint:
+                workspace = environment.get("GC_ANTFLY_WORKSPACE") or (
+                    "gc-" + hashlib.sha256(str(root).encode()).hexdigest()[:24]
+                )
+                arguments.extend(["--url", endpoint, "--workspace", workspace])
+                if environment.get("GC_ANTFLY_TABLE"):
+                    arguments.extend(["--table", environment["GC_ANTFLY_TABLE"]])
+                if environment.get("GC_ANTFLY_TOKEN_ENV"):
+                    arguments.extend(["--token-env", environment["GC_ANTFLY_TOKEN_ENV"]])
+                for name in ("DATABASE", "NAMESPACE"):
+                    if environment.get("GC_ANTFLY_" + name):
+                        arguments.extend(["--" + name.lower(), environment["GC_ANTFLY_" + name]])
+            for attempt in range(10):
+                result = call(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if result.returncode == 0 or metadata.exists():
+                    break
+                if attempt == 9:
+                    sys.stderr.buffer.write(result.stderr)
+                    return result.returncode
+                time.sleep(0.1)
+        return call(["antfly", "provider", "health"], stdout=subprocess.DEVNULL).returncode
+    if operation in {"health", "probe", "recover"}:
+        return call(["antfly", "provider", "health"]).returncode
+    return call(["antfly", "provider", *sys.argv[1:]]).returncode
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)

@@ -36,6 +36,7 @@ go_library(
         "ado.go",
         "agent_hook.go",
         "antfly.go",
+        "antfly_workflows.go",
         "assign.go",
         "audit.go",
         "auto_import_upgrade.go",
@@ -397,6 +398,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//:beads",
+        "//backend",
         "//backend/antfly",
         "//backend/http",
         "//cmd/bd/doctor",

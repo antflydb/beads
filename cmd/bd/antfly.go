@@ -44,28 +44,36 @@ func init() {
 	initialize.Flags().StringVar(&target.Namespace, "namespace", "public", "Antfly namespace")
 	initialize.Flags().StringVar(&prefix, "prefix", "bd", "Issue ID prefix")
 	var space, key string
-	memory := &cobra.Command{Use: "memory <create|observe|recall|forget>", Short: "Call native Antfly memory with a JSON body from stdin", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if args[0] != "recall" {
+	memory := &cobra.Command{Use: "memory <create|inspect|configure|observe|recall|correct|curate-entity|outcome|forget>", Short: "Call native Antfly memory with a JSON body from stdin", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if args[0] != "recall" && args[0] != "inspect" {
 			CheckReadonly("antfly memory")
 		}
-		if args[0] != "create" && args[0] != "observe" && args[0] != "recall" && args[0] != "forget" {
+		if args[0] != "create" && args[0] != "observe" && args[0] != "recall" && args[0] != "forget" && args[0] != "correct" && args[0] != "curate-entity" && args[0] != "outcome" && args[0] != "inspect" && args[0] != "configure" {
 			return fmt.Errorf("unknown memory action %q", args[0])
 		}
-		if args[0] != "recall" && key == "" {
+		if args[0] != "recall" && args[0] != "inspect" && key == "" {
 			return fmt.Errorf("memory mutations require --idempotency-key")
 		}
-		b, e := io.ReadAll(io.LimitReader(cmd.InOrStdin(), (4<<20)+1))
-		if e != nil {
-			return e
-		}
-		if len(b) > 4<<20 || !json.Valid(b) {
-			return fmt.Errorf("stdin must contain a JSON body of at most 4 MiB")
+		b := []byte(`{}`)
+		var e error
+		if args[0] != "inspect" {
+			b, e = io.ReadAll(io.LimitReader(cmd.InOrStdin(), (4<<20)+1))
+			if e != nil {
+				return e
+			}
+			if len(b) > 4<<20 || !json.Valid(b) {
+				return fmt.Errorf("stdin must contain a JSON body of at most 4 MiB")
+			}
 		}
 		dir := resolveInitBeadsDir()
 		if _, e = os.Stat(filepath.Join(dir, "antfly.json")); e != nil {
 			return e
 		}
-		out, e := bantfly.Memory(cmd.Context(), dir, space, args[0], key, b)
+		action := args[0]
+		if action == "curate-entity" {
+			action = "curate_entity"
+		}
+		out, e := bantfly.Memory(cmd.Context(), dir, space, action, key, b)
 		if e != nil {
 			return e
 		}
@@ -75,5 +83,6 @@ func init() {
 	memory.Flags().StringVar(&space, "space", "", "Memory space (default derived from workspace routing)")
 	memory.Flags().StringVar(&key, "idempotency-key", "", "Stable operation key, required for mutations")
 	group.AddCommand(initialize, memory)
+	addAntflyWorkflows(group)
 	rootCmd.AddCommand(group)
 }

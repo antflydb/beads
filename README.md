@@ -12,13 +12,14 @@
 
 **Docs:** https://beads.gascity.com/
 
-This `antflydb/beads` fork adds an **experimental native Antfly backend** on
+This `antflydb/beads` fork adds a **native Antfly backend** on
 `antfly/integration`. Use `bd antfly init` for embedded storage or
-`bd antfly init --url <server>` for remote storage. Core work state lives in
-Antfly, with ordinary issue/graph projections and direct access to its native
-memory service. See [ANTFLY_INTEGRATION.md](ANTFLY_INTEGRATION.md) for setup,
-the current 4 MiB workspace limit, supported behavior, and the intended
-row-oriented storage, entity-resolution, and snapshot/merge architecture.
+`bd antfly init --url <server>` for remote storage. It includes row storage,
+atomic claims, replayable memory/knowledge ingestion, cited retrieval, snapshot
+branches with three-way merges, and a Gas City provider pack. See
+[ANTFLY_INTEGRATION.md](ANTFLY_INTEGRATION.md) for setup, consistency guarantees,
+validation, and supported capabilities, or
+[the Gas City pack](contrib/gascity-antfly/README.md) for factory configuration.
 
 Beads provides a persistent, structured memory for coding agents. It replaces messy markdown plans with a dependency-aware graph, allowing agents to handle long-horizon tasks without losing context.
 

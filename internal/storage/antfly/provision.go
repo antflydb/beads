@@ -12,10 +12,14 @@ import (
 	"strings"
 
 	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage/backends"
 	"github.com/steveyegge/beads/issueops"
 )
 
 func Initialize(ctx context.Context, dir string, target Target, prefix string) error {
+	return InitializeWith(ctx, dir, target, prefix, backends.OpenOptions{})
+}
+func InitializeWith(ctx context.Context, dir string, target Target, prefix string, opts backends.OpenOptions) error {
 	if err := target.Validate(); err != nil {
 		return err
 	}
@@ -38,12 +42,12 @@ func Initialize(ctx context.Context, dir string, target Target, prefix string) e
 			return e
 		}
 	}
-	t, e := OpenTransport(target)
+	t, e := OpenTransportWith(target, opts)
 	if e != nil {
 		return e
 	}
 	defer func() { _ = t.Close() }()
-	if r, ok := t.(*remote); ok {
+	if r, ok := underlyingTransport(t).(*remote); ok {
 		path := "/db/v1/tables/" + url.PathEscape(target.Table)
 		_, _, status, err := r.call(ctx, http.MethodGet, path, nil)
 		if status == http.StatusNotFound {

@@ -305,7 +305,7 @@ func TestAntflyRemoteContract(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer func() { _ = transport.Close() }()
-	s := New(transport, false)
+	s := New(underlyingTransport(transport), false)
 	_, e = (&identity{s}).Bootstrap(ctx, issueops.BootstrapRequest{Prefix: "bd", ProjectID: "project"})
 	if e != nil {
 		t.Fatal(e)
@@ -414,7 +414,7 @@ func TestAntflyPendingCommitWaitsWithoutReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = tr.CompareAndSwap(context.Background(), 4, state); err != nil {
+	if err = underlyingTransport(tr).CompareAndSwap(context.Background(), 4, state); err != nil {
 		t.Fatal(err)
 	}
 	if commits != 1 || lookups != 2 {

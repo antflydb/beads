@@ -147,23 +147,8 @@ func (unsupportedDoltStorage) DeleteBranch(_ context.Context, _ string) (err err
 	return
 }
 
-func (unsupportedDoltStorage) DeleteIssue(_ context.Context, _ string) (err error) {
-	err = errUnsupported("DeleteIssue")
-	return
-}
-
-func (unsupportedDoltStorage) DeleteIssues(_ context.Context, _ []string, _ bool, _ bool, _ bool) (_ *types.DeleteIssuesResult, err error) {
-	err = errUnsupported("DeleteIssues")
-	return
-}
-
 func (unsupportedDoltStorage) DeleteIssuesBySourceRepo(_ context.Context, _ string) (_ int, err error) {
 	err = errUnsupported("DeleteIssuesBySourceRepo")
-	return
-}
-
-func (unsupportedDoltStorage) Deleter() (_ issueops.Deleter, err error) {
-	err = errUnsupported("Deleter")
 	return
 }
 
@@ -332,16 +317,6 @@ func (unsupportedDoltStorage) HasRemote(_ context.Context, _ string) (_ bool, er
 	return
 }
 
-func (unsupportedDoltStorage) HeartbeatIssue(_ context.Context, _ string, _ string) (err error) {
-	err = errUnsupported("HeartbeatIssue")
-	return
-}
-
-func (unsupportedDoltStorage) Heartbeater() (_ issueops.Heartbeater, err error) {
-	err = errUnsupported("Heartbeater")
-	return
-}
-
 func (unsupportedDoltStorage) History(_ context.Context, _ string) (_ []*storage.HistoryEntry, err error) {
 	err = errUnsupported("History")
 	return
@@ -377,11 +352,6 @@ func (unsupportedDoltStorage) IterWisps(_ context.Context, _ types.WispFilter) (
 	return
 }
 
-func (unsupportedDoltStorage) LeaseReclaimer() (_ issueops.LeaseReclaimer, err error) {
-	err = errUnsupported("LeaseReclaimer")
-	return
-}
-
 func (unsupportedDoltStorage) ListBranches(_ context.Context) (_ []string, err error) {
 	err = errUnsupported("ListBranches")
 	return
@@ -394,11 +364,6 @@ func (unsupportedDoltStorage) ListFederationPeers(_ context.Context) (_ []*stora
 
 func (unsupportedDoltStorage) ListRemotes(_ context.Context) (_ []storage.RemoteInfo, err error) {
 	err = errUnsupported("ListRemotes")
-	return
-}
-
-func (unsupportedDoltStorage) ListWisps(_ context.Context, _ types.WispFilter) (_ []*types.Issue, err error) {
-	err = errUnsupported("ListWisps")
 	return
 }
 
@@ -487,18 +452,8 @@ func (unsupportedDoltStorage) Querier() (_ issueops.Querier, err error) {
 	return
 }
 
-func (unsupportedDoltStorage) ReclaimExpiredLeases(_ context.Context, _ time.Duration, _ types.ReclaimFilter, _ string) (_ []types.ReclaimedLease, err error) {
-	err = errUnsupported("ReclaimExpiredLeases")
-	return
-}
-
 func (unsupportedDoltStorage) RecordProvenanceEvent(_ context.Context, _ types.ProvenanceEvent) (_ string, _ bool, err error) {
 	err = errUnsupported("RecordProvenanceEvent")
-	return
-}
-
-func (unsupportedDoltStorage) Releaser() (_ issueops.Releaser, err error) {
-	err = errUnsupported("Releaser")
 	return
 }
 
@@ -607,16 +562,6 @@ func (unsupportedDoltStorage) TreeWalker() (_ issueops.TreeWalker, err error) {
 	return
 }
 
-func (unsupportedDoltStorage) UnclaimIssue(_ context.Context, _ string, _ string, _ bool) (err error) {
-	err = errUnsupported("UnclaimIssue")
-	return
-}
-
-func (unsupportedDoltStorage) UnclaimIssueIfAssignee(_ context.Context, _ string, _ string, _ string) (err error) {
-	err = errUnsupported("UnclaimIssueIfAssignee")
-	return
-}
-
 func (unsupportedDoltStorage) UpdateIssue(_ context.Context, _ string, _ map[string]interface{}, _ string) (err error) {
 	err = errUnsupported("UpdateIssue")
 	return
@@ -637,4 +582,4 @@ func (unsupportedDoltStorage) UpdateIssueType(_ context.Context, _ string, _ str
 	return
 }
 
-// NOTE: partial shell (124 of 205 methods generated; 81 left to this package's hand-written set).
+// NOTE: partial shell (113 of 205 methods generated; 92 left to this package's hand-written set).

@@ -53,7 +53,7 @@ func (st *state) search(query string, f types.IssueFilter) ([]*types.IssueWithCo
 		if len(f.IDs) > 0 && !slices.Contains(f.IDs, id) || !strings.HasPrefix(id, f.IDPrefix) {
 			continue
 		}
-		if f.Ephemeral != nil && *f.Ephemeral || f.IsTemplate != nil && *f.IsTemplate || f.Pinned != nil && *f.Pinned != i.Pinned || f.IsBlocked != nil && *f.IsBlocked != i.IsBlocked {
+		if (f.Ephemeral != nil && *f.Ephemeral != storageops.IsWisp(i)) || (f.SkipWisps && storageops.IsWisp(i)) || f.IsTemplate != nil && *f.IsTemplate || f.Pinned != nil && *f.Pinned != i.Pinned || f.IsBlocked != nil && *f.IsBlocked != i.IsBlocked {
 			continue
 		}
 		matches := true
@@ -172,7 +172,7 @@ func (st *state) ready(f types.WorkFilter) ([]*types.IssueWithCounts, error) {
 	}
 	out := rows[:0]
 	for _, r := range rows {
-		if r.Pinned || r.IsBlocked || slices.Contains(f.ExcludeIDs, r.ID) {
+		if (!f.IncludeEphemeral && storageops.IsWisp(r.Issue)) || r.Pinned || r.IsBlocked || slices.Contains(f.ExcludeIDs, r.ID) {
 			continue
 		}
 		if !f.IncludeDeferred && st.deferred(r.ID, time.Now()) {

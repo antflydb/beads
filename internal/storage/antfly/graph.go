@@ -2,6 +2,8 @@ package antfly
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -238,7 +240,11 @@ func (c *comments) AddComment(ctx context.Context, req issueops.AddCommentReques
 		if e != nil {
 			return e
 		}
-		comment := &types.Comment{ID: fmt.Sprintf("%s:%d", i.ID, st.Revision+1), IssueID: i.ID, Author: req.Author, Text: req.Text, CreatedAt: time.Now().UTC()}
+		var identity [16]byte
+		if _, e = rand.Read(identity[:]); e != nil {
+			return e
+		}
+		comment := &types.Comment{ID: i.ID + ":" + hex.EncodeToString(identity[:]), IssueID: i.ID, Author: req.Author, Text: req.Text, CreatedAt: time.Now().UTC()}
 		i.Comments = append(i.Comments, comment)
 		st.audit("comment", i.ID, req.Author)
 		out.Comment = comment

@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/backends"
 	"io"
 	"net/http"
 	"net/url"
@@ -61,8 +64,8 @@ func (t Target) Validate() error {
 	if t.Table == "" || t.Workspace == "" {
 		return errors.New("Antfly table and workspace are required")
 	}
-	if strings.HasPrefix(t.Workspace, "bead:") {
-		return errors.New("Antfly workspace keys beginning bead: are reserved for issue projections")
+	if strings.HasPrefix(t.Workspace, "bead:") || strings.HasPrefix(t.Workspace, "row:") {
+		return errors.New("Antfly workspace keys beginning bead: or row: are reserved for internal records")
 	}
 	if t.Path != "" && ((t.Database != "" && t.Database != "default") || (t.Namespace != "" && t.Namespace != "public") || t.TokenEnv != "") {
 		return errors.New("embedded Antfly supports default/public scope and no remote credentials")
@@ -75,35 +78,72 @@ func (t Target) Validate() error {
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return errors.New("Antfly URL must be an HTTP(S) base URL without credentials, query, or fragment")
 		}
-		if u.Scheme == "http" && u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" {
+		if u.Scheme == "http" && !configfile.IsLocalHostString(u.Hostname()) {
 			return errors.New("remote Antfly requires HTTPS")
 		}
 	}
 	return nil
 }
 
-func OpenTransport(t Target) (Transport, error) {
+// TokenCredential is a per-workspace credential; it is never persisted.
+type TokenCredential string
+
+func (TokenCredential) BackendCredential()          {}
+func (t TokenCredential) AntflyBearerToken() string { return string(t) }
+
+func OpenTransport(t Target) (Transport, error) { return OpenTransportWith(t, backends.OpenOptions{}) }
+func OpenTransportWith(t Target, opts backends.OpenOptions) (Transport, error) {
 	if err := t.Validate(); err != nil {
 		return nil, err
 	}
 	if t.Path != "" {
-		return openEmbedded(t)
+		if opts.Credential != nil {
+			return nil, backends.ErrUnsupportedCredential
+		}
+		if opts.HTTPClient != nil {
+			return nil, backends.ErrHTTPClientWithoutOpenWith
+		}
+		if opts.UserAgent != "" {
+			return nil, backends.ErrUserAgentWithoutOpenWith
+		}
+		raw, err := openEmbedded(t)
+		if err != nil {
+			return nil, err
+		}
+		return newRowTransport(raw, t.Workspace), nil
 	}
 	token := ""
-	if t.TokenEnv != "" {
+	if opts.Credential != nil {
+		credential, ok := opts.Credential.(interface{ AntflyBearerToken() string })
+		if !ok {
+			return nil, backends.ErrUnsupportedCredential
+		}
+		token = credential.AntflyBearerToken()
+		if token == "" {
+			return nil, errors.New("explicit Antfly bearer credential is empty")
+		}
+	} else if t.TokenEnv != "" {
 		var ok bool
 		token, ok = os.LookupEnv(t.TokenEnv)
 		if !ok || token == "" {
 			return nil, fmt.Errorf("Antfly credential environment variable %s is empty", t.TokenEnv)
 		}
 	}
-	return &remote{target: t, token: token, client: &http.Client{Timeout: 60_000_000_000, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	client := &http.Client{Timeout: 60 * time.Second}
+	if opts.HTTPClient != nil {
+		copy := *opts.HTTPClient
+		client = &copy
+	}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	raw := &remote{target: t, token: token, client: client, userAgent: opts.UserAgent}
+	return newRowTransport(raw, t.Workspace), nil
 }
 
 type remote struct {
-	target Target
-	token  string
-	client *http.Client
+	target    Target
+	token     string
+	userAgent string
+	client    *http.Client
 }
 
 func (r *remote) call(ctx context.Context, method, path string, body any) ([]byte, http.Header, int, error) {
@@ -120,6 +160,9 @@ func (r *remote) call(ctx context.Context, method, path string, body any) ([]byt
 		return nil, nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if r.userAgent != "" {
+		req.Header.Set("User-Agent", r.userAgent)
+	}
 	if r.token != "" {
 		req.Header.Set("Authorization", "Bearer "+r.token)
 	}
@@ -139,7 +182,7 @@ func (r *remote) call(ctx context.Context, method, path string, body any) ([]byt
 		return nil, nil, resp.StatusCode, err
 	}
 	if len(b) > maxStateBytes {
-		return nil, nil, resp.StatusCode, errors.New("Antfly response exceeds workspace size limit")
+		return nil, nil, resp.StatusCode, errors.New("Antfly response exceeds the 4 MiB per-response limit")
 	}
 	if resp.StatusCode >= 300 {
 		return b, resp.Header, resp.StatusCode, fmt.Errorf("Antfly HTTP %d: %s", resp.StatusCode, b)
@@ -148,7 +191,11 @@ func (r *remote) call(ctx context.Context, method, path string, body any) ([]byt
 }
 
 func (r *remote) Load(ctx context.Context) ([]byte, uint64, error) {
-	b, h, status, err := r.call(ctx, http.MethodGet, "/db/v1/tables/"+url.PathEscape(r.target.Table)+"/documents/"+url.PathEscape(r.target.Workspace), nil)
+	return r.ReadDocument(ctx, r.target.Workspace)
+}
+
+func (r *remote) ReadDocument(ctx context.Context, key string) ([]byte, uint64, error) {
+	b, h, status, err := r.call(ctx, http.MethodGet, "/db/v1/tables/"+url.PathEscape(r.target.Table)+"/documents/"+url.PathEscape(key), nil)
 	if status == http.StatusNotFound {
 		return nil, 0, nil
 	}
@@ -167,7 +214,14 @@ func (r *remote) CompareAndSwap(ctx context.Context, version uint64, data []byte
 	if err != nil {
 		return err
 	}
-	body := map[string]any{"read_set": []any{map[string]any{"table": r.target.Table, "key": r.target.Workspace, "version": strconv.FormatUint(version, 10)}}, "tables": map[string]any{r.target.Table: map[string]any{"inserts": docs, "sync_level": "write"}}}
+	return r.WriteDocuments(ctx, &version, docs)
+}
+
+func (r *remote) WriteDocuments(ctx context.Context, version *uint64, docs map[string]json.RawMessage) error {
+	body := map[string]any{"read_set": []any{}, "tables": map[string]any{r.target.Table: map[string]any{"inserts": docs, "sync_level": "write"}}}
+	if version != nil {
+		body["read_set"] = []any{map[string]any{"table": r.target.Table, "key": r.target.Workspace, "version": strconv.FormatUint(*version, 10)}}
+	}
 	b, _, status, err := r.call(ctx, http.MethodPost, "/db/v1/transactions/commit", body)
 	if status == http.StatusConflict {
 		return errConflict
@@ -194,7 +248,20 @@ func (r *remote) CompareAndSwap(ctx context.Context, version uint64, data []byte
 		visibleCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		for {
-			if _, v, e := r.Load(visibleCtx); e == nil && v > version {
+			visible := true
+			if version == nil {
+				for key, expected := range docs {
+					got, v, e := r.ReadDocument(visibleCtx, key)
+					if e != nil || v == 0 || !jsonEqual(got, expected) {
+						visible = false
+						break
+					}
+				}
+			} else {
+				_, v, e := r.Load(visibleCtx)
+				visible = e == nil && v > *version
+			}
+			if visible {
 				return nil
 			}
 			timer := time.NewTimer(20 * time.Millisecond)
@@ -210,7 +277,7 @@ func (r *remote) CompareAndSwap(ctx context.Context, version uint64, data []byte
 }
 
 func (r *remote) Memory(ctx context.Context, space, action, key string, body json.RawMessage) (json.RawMessage, error) {
-	paths := map[string]string{"create": "", "observe": "/observations", "recall": "/recall", "forget": "/forget"}
+	paths := map[string]string{"create": "", "observe": "/observations", "recall": "/recall", "forget": "/forget", "correct": "/corrections", "curate_entity": "/entity-corrections", "outcome": "/outcomes", "inspect": "", "configure": ""}
 	p, ok := paths[action]
 	if !ok {
 		return nil, fmt.Errorf("unsupported memory action %q", action)
@@ -226,11 +293,21 @@ func (r *remote) Memory(ctx context.Context, space, action, key string, body jso
 		body, _ = json.Marshal(cfg)
 	}
 	// Memory uses a separate transport operation to carry its idempotency header.
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(r.target.URL, "/")+path, bytes.NewReader(body))
+	method := http.MethodPost
+	if action == "inspect" {
+		method = http.MethodGet
+		body = nil
+	} else if action == "configure" {
+		method = http.MethodPatch
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(r.target.URL, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if r.userAgent != "" {
+		req.Header.Set("User-Agent", r.userAgent)
+	}
 	req.Header.Set("Idempotency-Key", key)
 	if r.token != "" {
 		req.Header.Set("Authorization", "Bearer "+r.token)
@@ -252,6 +329,9 @@ func (r *remote) Memory(ctx context.Context, space, action, key string, body jso
 	}
 	if len(b) > maxStateBytes {
 		return nil, errors.New("memory response too large")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: native memory space", storage.ErrNotFound)
 	}
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("Antfly memory HTTP %d: %s", resp.StatusCode, b)

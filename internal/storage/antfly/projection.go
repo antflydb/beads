@@ -31,6 +31,8 @@ func projections(workspace string, data []byte) (map[string]json.RawMessage, err
 		if err = json.Unmarshal(b, &doc); err != nil {
 			return nil, err
 		}
+		delete(doc, "heartbeat_at")
+		delete(doc, "lease_expires_at")
 		doc["beads_workspace"] = workspace
 		doc["beads_revision"] = r.Version
 		doc["beads_document_type"] = "issue"
