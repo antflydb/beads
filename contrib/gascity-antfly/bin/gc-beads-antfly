@@ -24,9 +24,37 @@ def main():
     lifecycle = {"init", "start", "ensure-ready", "health", "probe", "recover"}
     if operation not in DATA_OPERATIONS | lifecycle:
         return 2
-    root = os.environ.get("GC_STORE_ROOT")
+    # Gas City invokes init <scope-dir> <prefix> [legacy-database-name].
+    # start owns no process: embedded handles are per call and remote servers
+    # are externally managed. Initialization belongs to the explicit init op.
+    if operation == "start":
+        return 0
+    init_root = None
+    init_prefix = None
+    if operation == "init" and len(sys.argv) > 2:
+        if len(sys.argv) not in (4, 5):
+            print("init requires <scope-dir> <prefix> [legacy-database-name]", file=sys.stderr)
+            return 1
+        init_root, init_prefix = sys.argv[2:4]
+        if not init_root or not init_prefix:
+            print("init scope and prefix must be nonempty", file=sys.stderr)
+            return 1
+        projected_root = os.environ.get("GC_STORE_ROOT")
+        if projected_root and Path(projected_root).resolve() != Path(init_root).resolve():
+            print("init scope disagrees with GC_STORE_ROOT", file=sys.stderr)
+            return 1
+    root = init_root or os.environ.get("GC_STORE_ROOT")
+    # Store operations receive GC_STORE_ROOT. Gas City's lifecycle calls use
+    # BEADS_DIR for an explicit scope, or the canonical city runtime projection
+    # before that scope has been initialized.
+    if not root and operation in lifecycle:
+        beads_dir = os.environ.get("BEADS_DIR")
+        if beads_dir:
+            root = str(Path(beads_dir).resolve().parent)
+        else:
+            root = os.environ.get("GC_CITY_PATH") or os.environ.get("GC_CITY_ROOT")
     if not root:
-        print("GC_STORE_ROOT is required", file=sys.stderr)
+        print("GC_STORE_ROOT is required for data operations; lifecycle requires a scope or city root", file=sys.stderr)
         return 1
     root = Path(root).resolve()
     if not root.is_dir():
@@ -47,8 +75,14 @@ def main():
                 if json.load(stream).get("backend") != "antfly":
                     print("scope already selects another Beads backend", file=sys.stderr)
                     return 1
+            if init_prefix:
+                current_prefix = call(["config", "get", "issue_prefix"],
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if current_prefix.returncode or current_prefix.stdout.decode().strip() != init_prefix:
+                    print("scope prefix does not match positional init prefix; existing routing was retained", file=sys.stderr)
+                    return 1
         else:
-            arguments = ["antfly", "init", "--prefix", environment.get("GC_BEADS_PREFIX", "bd")]
+            arguments = ["antfly", "init", "--prefix", init_prefix or environment.get("GC_BEADS_PREFIX", "bd")]
             endpoint = environment.get("GC_ANTFLY_URL")
             if endpoint:
                 workspace = environment.get("GC_ANTFLY_WORKSPACE") or (

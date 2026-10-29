@@ -1,6 +1,7 @@
 package antfly
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -67,10 +68,32 @@ func (r *rowTransport) readImmutable(ctx context.Context, key string) ([]byte, e
 		return nil, err
 	}
 	parts := strings.Split(key, ":")
-	if len(parts) != 3 || parts[0] != "row" || digest(b) != parts[2] {
-		return nil, fmt.Errorf("missing or corrupt immutable Antfly record %s", key)
+	if len(parts) == 3 && parts[0] == "row" {
+		if digest(b) == parts[2] {
+			return b, nil // Original format-2 records.
+		}
+		// Document APIs may reserialize JSON (including HTML escapes and
+		// number spellings). New records retain the exact hashed JSON as a
+		// string value, whose bytes survive every valid JSON round trip.
+		var envelope struct {
+			JSON *string `json:"_beads_immutable_json"`
+		}
+		if json.Unmarshal(b, &envelope) == nil && envelope.JSON != nil {
+			payload := []byte(*envelope.JSON)
+			if digest(payload) == parts[2] {
+				return payload, nil
+			}
+		}
+		// Recover existing records whose Go HTML escapes were normalized
+		// by Antfly. The original hash still has to match; never accept a
+		// merely parseable or semantically similar corrupted record.
+		var escaped bytes.Buffer
+		json.HTMLEscape(&escaped, b)
+		if digest(escaped.Bytes()) == parts[2] {
+			return escaped.Bytes(), nil
+		}
 	}
-	return b, nil
+	return nil, fmt.Errorf("missing or corrupt immutable Antfly record %s", key)
 }
 func (r *rowTransport) references(ctx context.Context, head *rowHead) (map[string]string, error) {
 	refs := map[string]string{}
@@ -331,17 +354,21 @@ func (r *rowTransport) compareAndSwapFrom(ctx context.Context, version uint64, d
 		return nil
 	}
 	stage := func(b []byte) error {
-		if len(b) > maxStateBytes {
+		encoded, err := json.Marshal(map[string]string{"_beads_immutable_json": string(b)})
+		if err != nil {
+			return err
+		}
+		if len(encoded) > maxStateBytes {
 			return errors.New("Antfly record exceeds the 4 MiB per-record limit")
 		}
-		if batchBytes+len(b) > 1<<20 {
+		if batchBytes+len(encoded) > 1<<20 {
 			if err := flush(); err != nil {
 				return err
 			}
 		}
 		key := r.address(b)
-		staged[key] = b
-		batchBytes += len(b)
+		staged[key] = encoded
+		batchBytes += len(encoded)
 		return nil
 	}
 	changedIssues := map[string]bool{}

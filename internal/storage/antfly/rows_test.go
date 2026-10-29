@@ -133,3 +133,67 @@ func sameJSON(a, b []byte) bool {
 	}
 	return reflect.DeepEqual(x, y)
 }
+
+func TestImmutableRowsSurviveDocumentReserialization(t *testing.T) {
+	ctx := context.Background()
+	tr, service := testRows()
+	st := emptyState()
+	st.Notes["format"] = "close -> accepted <review> & tested \u2028 Unicode é"
+	data, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = tr.CompareAndSwap(ctx, 0, data); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a JSON document service changing whitespace and escapes. Exact
+	// inner payloads, including large numbers and number spellings, survive.
+	for key, raw := range service.docs {
+		var object any
+		decoder := json.NewDecoder(strings.NewReader(string(raw)))
+		decoder.UseNumber()
+		if err = decoder.Decode(&object); err != nil {
+			t.Fatal(err)
+		}
+		var out strings.Builder
+		encoder := json.NewEncoder(&out)
+		encoder.SetEscapeHTML(false)
+		encoder.SetIndent("", "  ")
+		if err = encoder.Encode(object); err != nil {
+			t.Fatal(err)
+		}
+		service.docs[key] = []byte(out.String())
+	}
+	restored, _, err := tr.Load(ctx)
+	if err != nil || !sameJSON(restored, data) {
+		t.Fatalf("round trip: %s %v", restored, err)
+	}
+	payload := []byte(`{"value":{"number":9007199254740993,"decimal":1.000,"text":"a -> b & c"}}`)
+	key := tr.address(payload)
+	encoded, _ := json.Marshal(map[string]string{"_beads_immutable_json": string(payload)})
+	service.docs[key] = encoded
+	actual, err := tr.readImmutable(ctx, key)
+	if err != nil || string(actual) != string(payload) {
+		t.Fatalf("exact bytes: %s %v", actual, err)
+	}
+	service.docs[key] = []byte(`{"_beads_immutable_json":"changed"}`)
+	if _, err = tr.readImmutable(ctx, key); err == nil {
+		t.Fatal("corrupt envelope accepted")
+	}
+}
+
+func TestImmutableLegacyHTMLEscapesRemainVerifiable(t *testing.T) {
+	ctx := context.Background()
+	tr, service := testRows()
+	original, _ := json.Marshal(storedRow{Value: json.RawMessage(`{"close_reason":"tests -> passed <ok> & verified"}`)})
+	key := tr.address(original)
+	service.docs[key] = []byte(strings.NewReplacer(`\u003e`, ">", `\u003c`, "<", `\u0026`, "&").Replace(string(original)))
+	actual, err := tr.readImmutable(ctx, key)
+	if err != nil || string(actual) != string(original) {
+		t.Fatalf("legacy recovery: %s %v", actual, err)
+	}
+	service.docs[key] = []byte(`{"value":{"close_reason":"changed"}}`)
+	if _, err = tr.readImmutable(ctx, key); err == nil {
+		t.Fatal("corrupt legacy record accepted")
+	}
+}

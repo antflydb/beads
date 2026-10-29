@@ -42,16 +42,24 @@ def main():
             if beads_dir:
                 selected_environment["BEADS_DIR"] = str(beads_dir)
             print("bd " + " ".join(command), flush=True)
-            result = subprocess.run(
-                [binary, *command],
-                cwd=project,
-                env=selected_environment,
-                input=body,
-                capture_output=True,
-                text=True,
-                timeout=args.timeout,
-                check=False,
-            )
+            for attempt in range(5):
+                result = subprocess.run(
+                    [binary, *command],
+                    cwd=project,
+                    env=selected_environment,
+                    input=body,
+                    capture_output=True,
+                    text=True,
+                    timeout=args.timeout,
+                    check=False,
+                )
+                # The native memory service can positively reject a revision
+                # fence under background work. Retry the checkpointed consumer
+                # with its existing source IDs/body; never retry unknown errors.
+                if not (result.returncode and command[:3] == ("antfly", "knowledge", "sync")
+                        and "MemoryRevisionConflict" in result.stderr and attempt < 4):
+                    break
+                print("Retrying explicitly rejected native memory revision", flush=True)
             if (result.returncode == 0) != succeeds:
                 raise RuntimeError(
                     f"bd {' '.join(command)}: exit {result.returncode}\n"
@@ -80,7 +88,7 @@ def main():
         run("update", "smoke-first", "--title", "Claimed first issue")
         run("label", "add", "smoke-first", "tested")
         run("comments", "add", "smoke-first", "Regression verified")
-        run("close", "smoke-first", "--reason", "Verified")
+        run("close", "smoke-first", "--reason", "Verified -> <accepted> & complete")
         ready = json.loads(run("ready", "--json"))
         assert [issue["id"] for issue in ready] == ["smoke-second"], ready
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -207,7 +215,7 @@ def main():
         factory.mkdir()
         provider = Path(__file__).resolve().parent.parent / "contrib/gascity-antfly/bin/gc-beads-antfly"
         factory_environment = {key: value for key, value in environment.items() if not key.startswith("GC_ANTFLY_")}
-        factory_environment.update(GC_STORE_ROOT=str(factory), GC_BEADS_PREFIX="factory", ANTFLY_BD_BIN=binary)
+        factory_environment.update(GC_STORE_ROOT=str(factory), GC_BEADS_PREFIX="ambient", ANTFLY_BD_BIN=binary)
         if args.url:
             factory_environment.update(GC_ANTFLY_URL=args.url, GC_ANTFLY_TABLE=table)
             if args.token_env:
@@ -219,9 +227,29 @@ def main():
             assert (result.returncode == 0) == succeeds, result.stdout + result.stderr
             return result.stdout
 
-        invoke("init")
+        invoke("start")
+        assert not (factory / ".beads" / "metadata.json").exists()
+        invoke("init", str(factory), "factory")
+        invoke("init", str(factory), "wrong-prefix", succeeds=False)
         invoke("health")
+        # Real Gas City lifecycle calls do not project GC_STORE_ROOT.
+        lifecycle_environment = dict(factory_environment)
+        lifecycle_environment.pop("GC_STORE_ROOT")
+        lifecycle_environment["BEADS_DIR"] = str(factory / ".beads")
+        for projection in ("scope", "city"):
+            if projection == "city":
+                lifecycle_environment.pop("BEADS_DIR")
+                lifecycle_environment["GC_CITY_PATH"] = str(factory)
+            probe = subprocess.run([str(provider), "health"], cwd=project,
+                                   env=lifecycle_environment, text=True,
+                                   capture_output=True, timeout=args.timeout, check=False)
+            assert probe.returncode == 0, probe.stdout + probe.stderr
+        data_without_scope = subprocess.run([str(provider), "list"], cwd=project,
+                                            env=lifecycle_environment, text=True,
+                                            capture_output=True, timeout=args.timeout, check=False)
+        assert data_without_scope.returncode != 0, data_without_scope.stdout
         work = json.loads(invoke("create", body='{"title":"Factory work","type":"task"}'))
+        assert work["id"].startswith("factory-"), work
         ephemeral = json.loads(invoke("create", body='{"title":"Factory run","type":"task","ephemeral":true}'))
         ordinary = json.loads(invoke("ready"))
         assert any(item["id"] == work["id"] for item in ordinary), ordinary

@@ -37,7 +37,11 @@ remote mode and explicitly refuse embedded mode.
 settings, exact notes, audit/outbox events, branch manifests, and integration
 receipts are separate immutable records. Content-addressed directory pages
 reference those records, and a small workspace head selects a complete
-snapshot. Each mutation stages only changed records/pages, then conditionally
+snapshot. New immutable records carry their exact hashed JSON bytes in a JSON
+string envelope, so document-service whitespace, escaping, and number
+reserialization cannot invalidate their content addresses. Existing format-2
+records remain readable; normalized Go HTML escapes are restored only when
+the original content hash matches. Each mutation stages only changed records/pages, then conditionally
 publishes the head and changed ordinary issue/graph projections together.
 Readers follow immutable references, so concurrent writes cannot mix snapshots.
 Staging records from an aborted or interrupted publication are not visible as
@@ -302,9 +306,8 @@ Validation on this revision:
 - Command tree/help goldens, proxy capability registry, shared host-validation
   policy, and command-citation policy checks passed. Generated interface shells,
   Gazelle sources, Go source inventory, and Bazel module metadata were synchronized.
-- The full `make test` run reported 143 passed, 12 failed, and 44 skipped.
-  Three integration policy failures were corrected and their targets passed on
-  rerun. The other failures involve host requirements (Bash `mapfile`, `yq`,
+- The latest full `make test` run reported 146 passed, 9 failed, and 44 skipped.
+  The failures involve host requirements (Bash `mapfile`, `yq`,
   `timeout`, Linux-only checks), macOS process/listener detection, credential
   script assumptions, and an existing command-test timeout. The full upstream
   gate is therefore not green on this host.
@@ -318,3 +321,21 @@ repeated embedded history replays required more than the original 90-second
 per-command harness limit; the script exposes `--timeout` (default 300 seconds).
 This validation uses deterministic extraction. It does not certify a particular
 external model, production throughput, or every upstream Dolt workflow.
+
+
+## Real factory trial (2026-10-29)
+
+A real Gas City controller and three managed worker sessions completed a
+planner → implementer → independent reviewer workflow against an Antfly work
+ledger. The deliverable was a Python stdlib task-report CLI. Review fixed one
+artifact defect and expanded its suite from 16 to 23 passing tests. All three
+tasks closed, and the resulting live report showed three closed tasks and no
+ready work. See [the trial record](contrib/gascity-antfly/FACTORY_TRIAL.md).
+
+This was a scoped multi-agent coding workflow using explicit task dependencies,
+not certification of the stock Gas Town pack or every formula/convoy path.
+Gas City's own SQLite binding held its five orchestration classes. The trial's
+18 source events were also ingested through the knowledge pipeline, and cited
+context returned source evidence, promoted entity/event identities, and native
+memory recall. The trial also exposed and fixed lifecycle scope/prefix handling
+and an immutable JSON escape/hash mismatch that the earlier CLI smoke suite had missed.
