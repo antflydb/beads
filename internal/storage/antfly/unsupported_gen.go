@@ -92,11 +92,6 @@ func (unsupportedDoltStorage) ClearRepoMtime(_ context.Context, _ string) (err e
 	return
 }
 
-func (unsupportedDoltStorage) CloseIssue(_ context.Context, _ string, _ string, _ string, _ string) (err error) {
-	err = errUnsupported("CloseIssue")
-	return
-}
-
 func (unsupportedDoltStorage) CloseIssueChecked(_ context.Context, _ string, _ string, _ storage.CloseIssueOptions) (_ storage.CloseIssueResult, err error) {
 	err = errUnsupported("CloseIssueChecked")
 	return
@@ -447,11 +442,6 @@ func (unsupportedDoltStorage) PushTo(_ context.Context, _ string) (err error) {
 	return
 }
 
-func (unsupportedDoltStorage) Querier() (_ issueops.Querier, err error) {
-	err = errUnsupported("Querier")
-	return
-}
-
 func (unsupportedDoltStorage) RecordProvenanceEvent(_ context.Context, _ types.ProvenanceEvent) (_ string, _ bool, err error) {
 	err = errUnsupported("RecordProvenanceEvent")
 	return
@@ -582,4 +572,4 @@ func (unsupportedDoltStorage) UpdateIssueType(_ context.Context, _ string, _ str
 	return
 }
 
-// NOTE: partial shell (113 of 205 methods generated; 92 left to this package's hand-written set).
+// NOTE: partial shell (111 of 205 methods generated; 94 left to this package's hand-written set).

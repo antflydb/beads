@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/steveyegge/beads/issueops"
 	"reflect"
 	"strings"
@@ -262,5 +263,69 @@ func TestGenericSnapshotCacheFollowsHeadAndDoesNotAlias(t *testing.T) {
 	actual, _, err := tr.Load(ctx)
 	if err != nil || !sameJSON(actual, changed) {
 		t.Fatalf("cache hid publication: %s %v", actual, err)
+	}
+}
+
+func TestGenericIndexedSnapshotReadsBoundedRecords(t *testing.T) {
+	ctx := context.Background()
+	svc := &documentService{docs: map[string][]byte{}, versions: map[string]uint64{}, anchor: "infra"}
+	tr := &rowTransport{documentTransport: svc, workspace: "infra"}
+	records := map[string]any{}
+	for n := 0; n < 1000; n++ {
+		records[fmt.Sprintf("id-%d", n)] = map[string]any{"title": fmt.Sprintf("row %d", n)}
+	}
+	data, _ := json.Marshal(map[string]any{"schema": "test-v1", "records": records})
+	if e := tr.CompareAndSwap(ctx, 0, data); e != nil {
+		t.Fatal(e)
+	}
+	svc.reads = 0
+	got, e := tr.ReadSnapshotRecords(ctx, "records", []string{"id-123", "absent"}, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(got.Records) != 1 || !strings.Contains(string(got.Records["id-123"]), "row 123") {
+		t.Fatalf("records=%s", got.Records)
+	}
+	if svc.reads > 4 {
+		t.Fatalf("indexed lookup read %d documents", svc.reads)
+	}
+	old := got.Version
+	if e = tr.CompareAndSwap(ctx, old, data); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = tr.ReadSnapshotRecords(ctx, "records", []string{"id-123"}, &old); !errors.Is(e, ErrSnapshotConflict) {
+		t.Fatalf("stale pinned read: %v", e)
+	}
+}
+
+func TestSnapshotBackupRestoreChecksIntegrityAndConcurrentWrites(t *testing.T) {
+	ctx := context.Background()
+	source := &testTransport{data: []byte(`{"schema":"one","records":{"a":{"text":"<exact>"}}}`), version: 1}
+	backup, e := BackupSnapshot(ctx, source)
+	if e != nil {
+		t.Fatal(e)
+	}
+	dest := &testTransport{}
+	if e = RestoreSnapshotBackup(ctx, dest, backup, 0); e != nil {
+		t.Fatal(e)
+	}
+	if string(dest.data) != string(source.data) {
+		t.Fatalf("restore changed bytes: %s", dest.data)
+	}
+	if e = RestoreSnapshotBackup(ctx, dest, backup, 0); !errors.Is(e, ErrSnapshotConflict) {
+		t.Fatalf("stale restore: %v", e)
+	}
+	var envelope map[string]any
+	if e = json.Unmarshal(backup, &envelope); e != nil {
+		t.Fatal(e)
+	}
+	envelope["payload"] = `{"schema":"corrupt"}`
+	corrupt, _ := json.Marshal(envelope)
+	before := string(dest.data)
+	if e = RestoreSnapshotBackup(ctx, dest, corrupt, dest.version); e == nil {
+		t.Fatal("corrupt archive accepted")
+	}
+	if before != string(dest.data) {
+		t.Fatal("invalid archive wrote data")
 	}
 }

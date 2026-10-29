@@ -376,3 +376,13 @@ repeated native per-record reads that made the real Gas City controller slow.
 Internal content-addressed records are append-only; editing or deleting them
 behind a live head is outside the snapshot protocol. Core work transport keeps
 its original uncached integrity-checking behavior.
+
+## Stock-factory compatibility work
+
+Native boolean queries now use Beads' shared Querier role and pass its full
+contract suite. Work gates support guarded waiter/await-id updates, blocking
+readiness and legacy CLI close through the same lifecycle. Generic snapshots
+also expose hash-bucket point/batch lookup with expected-head checks, and a
+checksummed portable logical workspace archive with conditional restore.
+An archive covers its workspace; native memory held outside it requires a
+separate engine backup. These additions do not certify stock factory operation.

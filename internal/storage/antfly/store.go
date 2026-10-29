@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/beads/internal/storage/backends"
 	storageops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/workapi/storequerier"
 	"github.com/steveyegge/beads/internal/workapi/storeversionreconciler"
 	"github.com/steveyegge/beads/internal/workapi/storeworkspaceconfig"
 	"github.com/steveyegge/beads/issueops"
@@ -369,3 +370,6 @@ func (s *Store) openTarget(ctx context.Context, target Target, provision bool) (
 	}
 	return OpenTransportWith(target, s.openOptions)
 }
+
+// Querier exposes the shared validated boolean-query role over native reads.
+func (s *Store) Querier() (issueops.Querier, error) { return storequerier.New(s) }

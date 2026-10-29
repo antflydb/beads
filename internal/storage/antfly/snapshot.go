@@ -82,3 +82,161 @@ func joinSnapshot(fields, rows map[string]json.RawMessage) ([]byte, error) {
 	}
 	return json.Marshal(object)
 }
+
+// SnapshotRecords is a projection from one committed head. Fields carries the
+// head's scalar schema metadata; Records contains only requested existing keys.
+type SnapshotRecords struct {
+	Fields  map[string]json.RawMessage
+	Records map[string]json.RawMessage
+	Version uint64
+}
+
+// ReadSnapshotRecords uses the committed head's hash-bucket index. An optional
+// expected version makes a multi-stage index lookup fail rather than mix heads.
+func (r *rowTransport) ReadSnapshotRecords(ctx context.Context, field string, ids []string, expected *uint64) (SnapshotRecords, error) {
+	if r.domainProjection {
+		return SnapshotRecords{}, errUnsupported("generic indexed snapshot on core work")
+	}
+	if err := ctx.Err(); err != nil {
+		return SnapshotRecords{}, err
+	}
+	raw, v, err := r.documentTransport.Load(ctx)
+	if err != nil {
+		return SnapshotRecords{}, err
+	}
+	if expected != nil && *expected != v {
+		return SnapshotRecords{}, errConflict
+	}
+	result := SnapshotRecords{Fields: map[string]json.RawMessage{}, Records: map[string]json.RawMessage{}, Version: v}
+	if len(raw) == 0 {
+		return result, nil
+	}
+	head, err := readRowHead(raw)
+	if err != nil {
+		return SnapshotRecords{}, err
+	}
+	if head == nil {
+		// Legacy snapshots remain readable without an implicit rewrite.
+		if err = json.Unmarshal(raw, &result.Fields); err != nil {
+			return SnapshotRecords{}, err
+		}
+		var all map[string]json.RawMessage
+		if data, ok := result.Fields[field]; ok {
+			if err = json.Unmarshal(data, &all); err != nil {
+				return SnapshotRecords{}, err
+			}
+		}
+		for _, id := range ids {
+			if value, ok := all[id]; ok {
+				result.Records[id] = value
+			}
+		}
+		return result, nil
+	}
+	result.Fields = head.Fields
+	kind := "snapshot-" + base64.RawURLEncoding.EncodeToString([]byte(field))
+	pages := map[string]*rowPage{}
+	for _, id := range ids {
+		key := kind + "/" + id
+		bucket := kind + "/" + digest([]byte(key))[:2]
+		address, ok := head.Pages[bucket]
+		if !ok {
+			continue
+		}
+		page := pages[bucket]
+		if page == nil {
+			data, e := r.readImmutable(ctx, address)
+			if e != nil {
+				return SnapshotRecords{}, e
+			}
+			page = &rowPage{}
+			if e = json.Unmarshal(data, page); e != nil {
+				return SnapshotRecords{}, e
+			}
+			if page.Entries == nil {
+				return SnapshotRecords{}, fmt.Errorf("corrupt indexed snapshot page")
+			}
+			pages[bucket] = page
+		}
+		address, ok = page.Entries[key]
+		if !ok {
+			continue
+		}
+		data, e := r.readImmutable(ctx, address)
+		if e != nil {
+			return SnapshotRecords{}, e
+		}
+		var row storedRow
+		if e = json.Unmarshal(data, &row); e != nil {
+			return SnapshotRecords{}, e
+		}
+		if len(row.Value) == 0 {
+			return SnapshotRecords{}, fmt.Errorf("empty indexed snapshot record")
+		}
+		result.Records[id] = row.Value
+	}
+	return result, nil
+}
+
+// SnapshotBackup stores exact committed workspace bytes in a checksummed,
+// transport-independent envelope. Native memory outside the workspace is not
+// part of this archive and requires an engine backup of its own.
+type SnapshotBackup struct {
+	Format  string `json:"format"`
+	SHA256  string `json:"sha256"`
+	Payload string `json:"payload"`
+}
+type snapshotBackupTransport interface {
+	Load(context.Context) ([]byte, uint64, error)
+	CompareAndSwap(context.Context, uint64, []byte) error
+}
+
+// BackupSnapshot reads one committed logical snapshot, including all domain
+// fields and immutable branch state represented in that workspace.
+func BackupSnapshot(ctx context.Context, tr snapshotBackupTransport) ([]byte, error) {
+	data, _, err := tr.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		data = []byte(`{}`)
+	}
+	var object map[string]json.RawMessage
+	if err = json.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		return nil, fmt.Errorf("snapshot backup requires a JSON object")
+	}
+	return json.Marshal(SnapshotBackup{Format: "antfly-workspace-backup-v1", SHA256: digest(data), Payload: string(data)})
+}
+
+// DecodeSnapshotBackup checks the envelope and returns the exact snapshot bytes
+// for caller-owned schema and identity validation before restoring.
+func DecodeSnapshotBackup(encoded []byte) ([]byte, error) {
+	var archive SnapshotBackup
+	if err := json.Unmarshal(encoded, &archive); err != nil {
+		return nil, err
+	}
+	if archive.Format != "antfly-workspace-backup-v1" || archive.SHA256 != digest([]byte(archive.Payload)) {
+		return nil, fmt.Errorf("invalid snapshot backup format or checksum")
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(archive.Payload), &object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		return nil, fmt.Errorf("backup snapshot is not a JSON object")
+	}
+	return []byte(archive.Payload), nil
+}
+
+// RestoreSnapshotBackup publishes only against the caller's observed head. A
+// concurrent writer rejects the restore; unknown outcomes are never replayed.
+func RestoreSnapshotBackup(ctx context.Context, tr snapshotBackupTransport, encoded []byte, expected uint64) error {
+	data, err := DecodeSnapshotBackup(encoded)
+	if err != nil {
+		return err
+	}
+	return tr.CompareAndSwap(ctx, expected, data)
+}

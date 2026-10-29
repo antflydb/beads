@@ -107,32 +107,23 @@ func (st *state) search(query string, f types.IssueFilter) ([]*types.IssueWithCo
 		}
 		out = append(out, row)
 	}
-	if f.SortBy != "" && f.SortBy != "priority" && f.SortBy != "created" && f.SortBy != "updated" && f.SortBy != "id" && f.SortBy != "title" {
+	if !slices.Contains([]string{"", "priority", "created", "updated", "closed", "status", "id", "title", "type", "assignee"}, f.SortBy) {
 		return nil, errUnsupported("sort." + f.SortBy)
 	}
 	sort.Slice(out, func(a, b int) bool {
 		i, j := out[a].Issue, out[b].Issue
-		order := 0
-		switch f.SortBy {
-		case "created":
-			order = -i.CreatedAt.Compare(j.CreatedAt)
-		case "updated":
-			order = -i.UpdatedAt.Compare(j.UpdatedAt)
-		case "id":
-			order = strings.Compare(i.ID, j.ID)
-		case "title":
-			order = strings.Compare(i.Title, j.Title)
-		default:
+		order := workapi.CompareIssuesBy(i, j, f.SortBy)
+		if f.SortBy == "" {
 			order = cmp.Compare(i.Priority, j.Priority)
 			if order == 0 {
 				order = -i.CreatedAt.Compare(j.CreatedAt)
 			}
 		}
+		if f.SortDesc {
+			order = -order
+		}
 		if order == 0 {
 			order = strings.Compare(i.ID, j.ID)
-		}
-		if f.SortDesc {
-			return order > 0
 		}
 		return order < 0
 	})

@@ -220,3 +220,9 @@ func (t *transaction) AddDependencyWithOptions(ctx context.Context, d *types.Dep
 	return t.s.AddDependency(ctx, d, actor)
 }
 func (t *transaction) CycleThroughEdges(context.Context, [][2]string) (string, error) { return "", nil } // Every inserted scheduling edge already passed the whole-graph check.
+
+// CloseIssue routes legacy CLI callers through the same guarded lifecycle.
+func (s *Store) CloseIssue(ctx context.Context, id, reason, actor, session string) error {
+	_, err := (&lifecycle{s}).Close(ctx, issueops.CloseRequest{Actor: actor, IssueID: id, Reason: reason, Session: session})
+	return err
+}

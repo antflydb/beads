@@ -82,3 +82,27 @@ var ErrSnapshotConflict = impl.ErrSnapshotConflict
 func OpenSnapshot(ctx context.Context, target Target, opts backend.OpenOptions) (SnapshotTransport, error) {
 	return impl.OpenSnapshot(ctx, target, opts)
 }
+
+// SnapshotRecords contains selected records and schema fields from one head.
+type SnapshotRecords = impl.SnapshotRecords
+
+// IndexedSnapshotTransport supports bounded point and batch reads without
+// reconstructing a whole workspace. Expected versions pin multi-stage lookups.
+type IndexedSnapshotTransport interface {
+	SnapshotTransport
+	ReadSnapshotRecords(context.Context, string, []string, *uint64) (SnapshotRecords, error)
+}
+
+// BackupSnapshot archives one committed logical workspace; native memory
+// outside that workspace requires a separate engine backup.
+func BackupSnapshot(ctx context.Context, tr SnapshotTransport) ([]byte, error) {
+	return impl.BackupSnapshot(ctx, tr)
+}
+
+// DecodeSnapshotBackup validates the checksum before caller-owned schema checks.
+func DecodeSnapshotBackup(encoded []byte) ([]byte, error) { return impl.DecodeSnapshotBackup(encoded) }
+
+// RestoreSnapshotBackup conditionally publishes a previously validated archive.
+func RestoreSnapshotBackup(ctx context.Context, tr SnapshotTransport, encoded []byte, expected uint64) error {
+	return impl.RestoreSnapshotBackup(ctx, tr, encoded, expected)
+}

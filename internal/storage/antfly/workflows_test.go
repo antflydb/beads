@@ -239,3 +239,52 @@ func TestExistingRoleBoundaryContracts(t *testing.T) {
 		conformance.RunDeleterRefusesAMalformedRequest(t, ctx, conformance.DeleterFixture{Deleter: &deleter{s}})
 	})
 }
+
+func TestAntflyWorkGateLifecycleAndWaiterFencing(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	gate := &types.Issue{ID: "bd-gate", Title: "timer", IssueType: types.TypeGate, AwaitType: "timer", AwaitID: "1h"}
+	if e := s.CreateIssue(ctx, gate, "test"); e != nil {
+		t.Fatal(e)
+	}
+	createTestIssue(t, s, "bd-aftergate")
+	if _, e := (&graph{s}).AddDependencies(ctx, issueops.AddDependenciesRequest{Actor: "test", Edges: []issueops.DependencyEdge{{IssueID: "bd-aftergate", DependsOnID: gate.ID, Type: types.DepBlocks}}}); e != nil {
+		t.Fatal(e)
+	}
+	before, e := s.GetIssue(ctx, gate.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	old := before.RowVersion
+	if _, e = (&lifecycle{s}).Update(ctx, issueops.UpdateRequest{Actor: "test", IssueID: gate.ID, ExpectedVersion: &old, Patch: issueops.IssuePatch{Waiters: issueops.Field[[]string]{Set: true, Value: []string{"worker"}}}}); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = (&lifecycle{s}).Update(ctx, issueops.UpdateRequest{Actor: "test", IssueID: gate.ID, ExpectedVersion: &old, Patch: issueops.IssuePatch{Waiters: issueops.Field[[]string]{Set: true, Value: []string{"loser"}}}}); !errors.Is(e, storage.ErrVersionMismatch) {
+		t.Fatalf("stale waiter write: %v", e)
+	}
+	rows, e := s.GetReadyWork(ctx, types.WorkFilter{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, r := range rows {
+		if r.ID == "bd-aftergate" {
+			t.Fatal("unresolved gate did not block work")
+		}
+	}
+	if e = s.CloseIssue(ctx, gate.ID, "timer elapsed", "test", ""); e != nil {
+		t.Fatal(e)
+	}
+	rows, e = s.GetReadyWork(ctx, types.WorkFilter{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	found := false
+	for _, r := range rows {
+		if r.ID == "bd-aftergate" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("resolved gate kept work blocked")
+	}
+}

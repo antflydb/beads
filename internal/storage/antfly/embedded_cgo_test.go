@@ -10,6 +10,7 @@ import (
 	"github.com/steveyegge/beads/backend/conformance"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -348,5 +349,54 @@ func TestNativeGenericSnapshot(t *testing.T) {
 	}
 	if err = transport.CompareAndSwap(ctx, version, data); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNativeIndexedSnapshotBackup(t *testing.T) {
+	lib := os.Getenv("ANTFLY_TEST_LIBRARY")
+	if lib == "" {
+		t.Skip("ANTFLY_TEST_LIBRARY required")
+	}
+	ctx := context.Background()
+	target := Target{Path: filepath.Join(t.TempDir(), "archive.aflite"), Library: lib, Table: "snapshots", Workspace: "source"}
+	src, e := OpenSnapshot(ctx, target, backends.OpenOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer src.Close()
+	data := []byte(`{"schema":"native-v1","records":{"one":{"text":"<exact>"},"two":{"text":"other"}}}`)
+	if e = src.CompareAndSwap(ctx, 0, data); e != nil {
+		t.Fatal(e)
+	}
+	selected, e := src.(*rowTransport).ReadSnapshotRecords(ctx, "records", []string{"one"}, nil)
+	if e != nil || len(selected.Records) != 1 {
+		t.Fatalf("indexed read: %+v %v", selected, e)
+	}
+	archive, e := BackupSnapshot(ctx, src)
+	if e != nil {
+		t.Fatal(e)
+	}
+	target.Workspace = "restored"
+	dst, e := OpenSnapshot(ctx, target, backends.OpenOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer dst.Close()
+	if e = RestoreSnapshotBackup(ctx, dst, archive, 0); e != nil {
+		t.Fatal(e)
+	}
+	raw, _, e := dst.Load(ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var got, want any
+	if e = json.Unmarshal(raw, &got); e != nil {
+		t.Fatal(e)
+	}
+	if e = json.Unmarshal(data, &want); e != nil {
+		t.Fatal(e)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("restore differs: %s", raw)
 	}
 }
