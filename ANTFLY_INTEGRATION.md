@@ -414,3 +414,22 @@ the engine's existing administrative API against a fresh server, with matching
 catalogs and workspace heads. This is separate from logical workspace archives.
 Generic collection accepts a schema validator before adopting an interrupted
 maintenance fence, so foreign workspace state is never mutated during recovery.
+
+Typed work-plane retention is available through the executable provider's
+`retention` operation. Reaping and compaction select from one committed
+snapshot and publish once through native OCC; previews discard the same staged
+operations. Orphans close leaf-first, live/young/foreign descendants hold their
+ancestors, references and pins prevent deletion, and removed IDs are retired.
+Persistent promotion uses the shared persistence normalizer and preserves
+assignment, comments and dependencies. Queue state, sessions, operation journals
+and external messaging remain owned by their domain services. In a split city,
+Gas City exposes this through its typed `storage retain-work` operator command;
+the opaque provider protocol stays refused by generic `gc bd` forwarding.
+
+Core issue point reads now use per-issue immutable lookup rows published with
+the workspace head. They fetch only the issue, lease, comments and outgoing
+edges, validating project identity and pinning the index/record join. Legacy
+heads fall back to the original read path until their next write. A 1,000-issue
+oracle verifies exact aggregate contents, detached caller buffers and bounded
+document reads. The complete backend gate passed against embedded and remote
+Antfly after this addition; broad queries and writes still load domain state.

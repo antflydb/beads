@@ -99,9 +99,6 @@ func (l *lifecycle) Update(ctx context.Context, req issueops.UpdateRequest) (out
 	if req.Actor == "" || req.IssueID == "" {
 		return out, storage.ErrValidation
 	}
-	if req.Patch.Persistence.Set {
-		return out, errUnsupported("Lifecycle.Update: persistence")
-	}
 	err = l.s.mutate(ctx, func(st *state) error {
 		if st.Config["antfly.branch.parent"] != "" && (req.Claim || req.Patch.Assignee.Set || (req.Patch.Status.Set && req.Patch.Status.Value == types.StatusInProgress)) {
 			return errUnsupported("Update: live claims belong in main")
@@ -202,6 +199,13 @@ func (l *lifecycle) Update(ctx context.Context, req issueops.UpdateRequest) (out
 					return e
 				}
 			}
+		}
+		if req.Patch.Persistence.Set {
+			ephemeral, noHistory, class, e := types.NormalizePersistenceMode(*i, req.Patch.Persistence.Value)
+			if e != nil {
+				return fmt.Errorf("%w: %w", storage.ErrValidation, e)
+			}
+			i.Ephemeral, i.NoHistory, i.StorageClass = ephemeral, noHistory, class
 		}
 		after := st.hydrate(i.ID)
 		out.Changed = !reflect.DeepEqual(before, after)
@@ -384,6 +388,9 @@ func (s *Store) CreateIssue(ctx context.Context, i *types.Issue, actor string) e
 	return e
 }
 func (s *Store) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
+	if issue, handled, err := s.indexedIssue(ctx, id); handled {
+		return issue, err
+	}
 	st, _, e := s.load(ctx)
 	if e != nil {
 		return nil, e

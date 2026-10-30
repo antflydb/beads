@@ -48,6 +48,8 @@ func (s *Store) ExecuteFactory(ctx context.Context, op string, args []string, bo
 		return out
 	}
 	switch op {
+	case "retention":
+		return s.factoryRetention(ctx, args, actor)
 	case "health":
 		st, _, err := s.load(ctx)
 		if err != nil {
@@ -59,13 +61,13 @@ func (s *Store) ExecuteFactory(ctx context.Context, op string, args []string, bo
 		if err != nil {
 			return nil, err
 		}
-		st, _, err := s.load(ctx)
+		i, err := s.GetIssue(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		i, err := st.issue(id)
-		if err != nil {
-			return nil, err
+		st := emptyState()
+		for n, edge := range i.Dependencies {
+			st.Edges[fmt.Sprint(n)] = edge
 		}
 		return encode(wire(st, i))
 	case "list", "children", "list-by-label", "ready":

@@ -439,3 +439,145 @@ func TestIntegrationPreservesRetiredIDsAndRefusesResurrection(t *testing.T) {
 		t.Fatalf("retired ID resurrected: conflicts=%v err=%v", conflicts, err)
 	}
 }
+
+func TestNativePersistencePromotionPreservesAggregateAndAssignment(t *testing.T) {
+	s, transport := testStore(t)
+	ctx := context.Background()
+	createTestIssue(t, s, "bd-promotion-root")
+	_, err := (&lifecycle{s}).Create(ctx, issueops.CreateRequest{Issue: &types.Issue{ID: "bd-promotion-child", Title: "ephemeral evidence", IssueType: types.TypeTask, Status: types.StatusOpen, Priority: 2, Ephemeral: true, Assignee: "worker"}, Actor: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = (&graph{s}).AddDependencies(ctx, issueops.AddDependenciesRequest{Actor: "test", Edges: []issueops.DependencyEdge{{IssueID: "bd-promotion-child", DependsOnID: "bd-promotion-root", Type: types.DepParentChild}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AddComment(ctx, "bd-promotion-child", "test", "evidence survives"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.GetIssue(ctx, "bd-promotion-child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commits := transport.commits
+	out, err := (&lifecycle{s}).Update(ctx, issueops.UpdateRequest{IssueID: before.ID, Actor: "worker", ExpectedVersion: &before.RowVersion, Patch: issueops.IssuePatch{Persistence: issueops.Field[issueops.PersistenceMode]{Set: true, Value: issueops.PersistenceModePersistent}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.Issue
+	if !out.Changed || got.Ephemeral || got.NoHistory || got.Assignee != "worker" || got.Status != before.Status || got.RowVersion <= before.RowVersion || len(got.Dependencies) != 1 || len(got.Comments) != 1 || got.LeaseExpiresAt != nil || transport.commits != commits+1 {
+		t.Fatalf("promotion lost aggregate/claim or was not atomic: before=%+v after=%+v commits=%d", before, got, transport.commits-commits)
+	}
+}
+
+func TestTypedWorkRetentionPreviewAtomicClosureAndProtection(t *testing.T) {
+	s, transport := testStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for _, id := range []string{"bd-owner", "bd-mid", "bd-leaf", "bd-held", "bd-foreign", "bd-young", "bd-old-closed", "bd-op", "bd-ttl"} {
+		createTestIssue(t, s, id)
+	}
+	if err := s.mutate(ctx, func(st *state) error {
+		for _, r := range st.Issues {
+			r.Issue.CreatedAt = now.Add(-40 * 24 * time.Hour)
+			r.Issue.UpdatedAt = r.Issue.CreatedAt
+			r.Issue.Ephemeral = true
+		}
+		st.Issues["bd-owner"].Issue.Status = types.StatusClosed
+		st.Issues["bd-old-closed"].Issue.Status = types.StatusClosed
+		at := now.Add(-30 * 24 * time.Hour)
+		st.Issues["bd-old-closed"].Issue.ClosedAt = &at
+		st.Issues["bd-young"].Issue.CreatedAt = now
+		st.Issues["bd-foreign"].Issue.Metadata = json.RawMessage(`{"gc.root_store_ref":"elsewhere"}`)
+		st.Issues["bd-ttl"].Issue.Ephemeral = false
+		st.Issues["bd-ttl"].Issue.Metadata = json.RawMessage(`{"expires_at":123}`)
+		st.Issues["bd-op"].Issue.IssueType = types.IssueType("op")
+		st.Issues["bd-op"].Issue.Status = types.StatusClosed
+		st.Issues["bd-op"].Issue.ClosedAt = &at
+		for _, edge := range [][2]string{{"bd-mid", "bd-owner"}, {"bd-leaf", "bd-mid"}, {"bd-held", "bd-owner"}, {"bd-young", "bd-held"}, {"bd-foreign", "bd-owner"}} {
+			if err := st.addEdge(edge[0], edge[1], types.DepParentChild, "test"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	options := retentionOptions{policy: "reap", now: now, staleAge: 24 * time.Hour, closedAge: 7 * 24 * time.Hour, staleIssueAge: 30 * 24 * time.Hour, cityScope: true, limit: 100, dryRun: true}
+	before, version, err := s.load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := s.retain(ctx, options, "reaper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Closed) != 2 || preview.Closed[0] != "bd-leaf" || preview.Closed[1] != "bd-mid" || len(preview.Deleted) != 1 || preview.Deleted[0] != "bd-old-closed" {
+		t.Fatalf("preview=%+v", preview)
+	}
+	_, afterVersion, err := s.load(ctx)
+	if err != nil || version != afterVersion {
+		t.Fatalf("preview published: %d %d %v", version, afterVersion, err)
+	}
+	commits := transport.commits
+	options.dryRun = false
+	committed, err := s.retain(ctx, options, "reaper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transport.commits != commits+1 || len(committed.Closed) != 2 {
+		t.Fatalf("non-atomic retention: %+v commits=%d", committed, transport.commits-commits)
+	}
+	after, _, err := s.load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"bd-held", "bd-foreign", "bd-young", "bd-ttl"} {
+		if after.Issues[id].Issue.Status != before.Issues[id].Issue.Status {
+			t.Fatalf("closed protected %s", id)
+		}
+	}
+	if after.Issues["bd-op"] == nil || after.Issues["bd-old-closed"] != nil || after.Retired["bd-old-closed"].IsZero() {
+		t.Fatal("protected/retired records incorrect")
+	}
+}
+
+func TestTypedWorkCompactionPreservesEvidenceAndAssignment(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for _, id := range []string{"bd-keep", "bd-comment", "bd-delete", "bd-nohistory"} {
+		createTestIssue(t, s, id)
+	}
+	if err := s.mutate(ctx, func(st *state) error {
+		old := now.Add(-10 * 24 * time.Hour)
+		for _, r := range st.Issues {
+			r.Issue.Ephemeral = true
+			r.Issue.CreatedAt = old
+			r.Issue.UpdatedAt = old
+			r.Issue.Status = types.StatusClosed
+			r.Issue.ClosedAt = &old
+		}
+		st.Issues["bd-keep"].Issue.Status = types.StatusOpen
+        st.Issues["bd-keep"].Issue.ClosedAt = nil
+		st.Issues["bd-keep"].Issue.Assignee = "worker"
+		st.Issues["bd-keep"].Issue.Labels = []string{"keep"}
+		st.Issues["bd-comment"].Issue.Comments = []*types.Comment{{ID: "evidence", IssueID: "bd-comment", Text: "keep evidence"}}
+		st.Issues["bd-nohistory"].Issue.Ephemeral = false
+		st.Issues["bd-nohistory"].Issue.NoHistory = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.retain(ctx, retentionOptions{policy: "compact", now: now, staleAge: 24 * time.Hour, closedAge: 7 * 24 * time.Hour, staleIssueAge: 30 * 24 * time.Hour, limit: 100}, "compactor")
+	if err != nil || len(result.Promoted) != 2 || len(result.Deleted) != 1 || result.Deleted[0] != "bd-delete" {
+		t.Fatalf("compaction=%+v err=%v", result, err)
+	}
+	st, _, err := s.load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Issues["bd-keep"].Issue.Ephemeral || st.Issues["bd-keep"].Issue.Assignee != "worker" || st.Issues["bd-nohistory"] == nil || len(st.Issues["bd-comment"].Issue.Comments) != 1 {
+		t.Fatal("compaction lost evidence/assignment or removed no-history row")
+	}
+}

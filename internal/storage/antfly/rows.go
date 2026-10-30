@@ -244,6 +244,9 @@ func splitState(data []byte) (map[string]json.RawMessage, map[string]json.RawMes
 			rows[id], _ = json.Marshal(record)
 		}
 	}
+	if err := addCorePointIndex(fields, rows); err != nil {
+		return nil, nil, err
+	}
 	return fields, rows, nil
 }
 func joinState(fields, rows map[string]json.RawMessage, domainProjection bool) ([]byte, error) {
@@ -252,6 +255,9 @@ func joinState(fields, rows map[string]json.RawMessage, domainProjection bool) (
 	}
 	object := map[string]json.RawMessage{}
 	for k, v := range fields {
+		if k == coreIndexField {
+			continue
+		}
 		object[k] = v
 	}
 	maps := map[string]map[string]json.RawMessage{}
@@ -268,6 +274,9 @@ func joinState(fields, rows map[string]json.RawMessage, domainProjection bool) (
 			return nil, errors.New("corrupt logical Antfly row key")
 		}
 		kind, id := parts[0], parts[1]
+		if kind == coreIndexKind {
+			continue
+		}
 		if kind == "events" {
 			events = append(events, rows[key])
 			continue

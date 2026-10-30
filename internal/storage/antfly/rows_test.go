@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/steveyegge/beads/internal/storage/backends"
-	"github.com/steveyegge/beads/issueops"
 	"os"
 	"reflect"
 	"sort"
@@ -14,6 +12,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/steveyegge/beads/internal/storage"
+	"github.com/steveyegge/beads/internal/storage/backends"
+	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/issueops"
 )
 
 type documentService struct {
@@ -525,5 +528,61 @@ func TestSnapshotCollectorValidatesSchemaBeforeAdoptingFence(t *testing.T) {
 	}
 	if string(svc.docs[svc.anchor]) != before {
 		t.Fatal("adopted a foreign workspace before validation")
+	}
+}
+
+func TestCoreIndexedIssueReadsBoundedRowsAndPreservesAggregate(t *testing.T) {
+	ctx := context.Background()
+	svc := &documentService{docs: map[string][]byte{}, versions: map[string]uint64{}, anchor: "work"}
+	transport := newRowTransport(svc, "work")
+	st := emptyState()
+	st.Config["project_id"] = "indexed-project"
+	st.Config["issue_prefix"] = "bd"
+	for n := 0; n < 1000; n++ {
+		id := fmt.Sprintf("bd-indexed-%04d", n)
+		st.Issues[id] = &record{Issue: types.Issue{ID: id, Title: id, Status: types.StatusOpen, IssueType: types.TypeTask, Priority: 2, RowVersion: 7}, Version: 7}
+	}
+	id := "bd-indexed-0123"
+	expiry := time.Now().UTC().Add(time.Hour)
+	st.Issues[id].Issue.LeaseExpiresAt = &expiry
+	st.Issues[id].Issue.Comments = []*types.Comment{{ID: "comment-one", IssueID: id, Text: "indexed evidence"}}
+	if err := st.addEdge(id, "bd-indexed-0000", types.DepBlocks, "test"); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = transport.CompareAndSwap(ctx, 0, encoded); err != nil {
+		t.Fatal(err)
+	}
+	store := New(transport, false)
+	store.expectedProject = "indexed-project"
+	want := st.hydrate(id)
+	svc.reads = 0
+	got, err := store.GetIssue(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, _ := json.Marshal(want)
+	right, _ := json.Marshal(got)
+	if string(left) != string(right) {
+		t.Fatalf("indexed aggregate differs: want=%s got=%s", left, right)
+	}
+	if svc.reads > 18 {
+		t.Fatalf("point lookup read unrelated workspace/history: %d document reads", svc.reads)
+	}
+	got.Comments[0].Text = "caller mutation"
+	again, err := store.GetIssue(ctx, id)
+	if err != nil || again.Comments[0].Text != "indexed evidence" {
+		t.Fatalf("caller alias: %+v %v", again, err)
+	}
+	store.expectedProject = "foreign-project"
+	if _, err = store.GetIssue(ctx, id); err == nil {
+		t.Fatal("indexed lookup bypassed project identity")
+	}
+	store.expectedProject = "indexed-project"
+	if _, err = store.GetIssue(ctx, "bd-absent"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("missing indexed issue: %v", err)
 	}
 }
