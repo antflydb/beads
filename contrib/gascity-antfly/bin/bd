@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Route stock role prompts' bd commands through Gas City's storage front door.
+
+Pin ANTFLY_BD_BIN and BD_BIN to the actual Beads executable. Put this directory
+before it on agent PATH. The work provider always invokes the pinned executable.
+"""
+import os
+from pathlib import Path
+import shutil
+import sys
+
+
+def main():
+    raw = os.environ.get("ANTFLY_BD_BIN") or os.environ.get("BD_BIN")
+    if not raw or not Path(raw).is_absolute() or Path(raw).resolve() == Path(__file__).resolve():
+        print("Antfly bd router requires ANTFLY_BD_BIN or BD_BIN pointing to the absolute native Beads executable", file=sys.stderr)
+        return 1
+    environment = dict(os.environ, BD_BIN=raw)
+    city = environment.get("GC_CITY_PATH") or environment.get("GC_CITY")
+    if not city or (len(sys.argv) > 1 and sys.argv[1] == "antfly"):
+        os.execve(raw, [raw, *sys.argv[1:]], environment)
+    if environment.get("GC_ANTFLY_BD_ROUTING") == "1":
+        print("Gas City bd routing recursed; pin workspace.env.BD_BIN to the native executable", file=sys.stderr)
+        return 1
+    binary = environment.get("GC_BIN") or shutil.which("gc")
+    if not binary:
+        print("Gas City executable is required on PATH or in GC_BIN", file=sys.stderr)
+        return 1
+    environment["GC_ANTFLY_BD_ROUTING"] = "1"
+    environment["GC_CITY_PATH"] = city
+    os.execve(binary, [binary, "bd", *sys.argv[1:]], environment)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

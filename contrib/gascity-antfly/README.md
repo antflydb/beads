@@ -72,3 +72,13 @@ the initializing shell. For an older descriptor with no `library`, set that
 field to the qualified absolute library path or retain the environment override.
 The pinned `ANTFLY_BD_BIN` must still be available to the provider. A failed
 prefix read reports its actual runtime error and leaves routing unchanged.
+
+Stock role prompts invoke bare `bd` as well as `gc bd`. On a city with storage
+classes, put this pack's `bin` directory first on agent PATH and set both
+`ANTFLY_BD_BIN` and `BD_BIN` to the absolute native Beads executable. Pin the
+same raw executable in `[workspace.env] BD_BIN` so inventory and work-provider
+subprocesses cannot recurse through the router. Preserve these variables in
+`GC_SUPERVISOR_ENV`. The bundled `bin/bd` routes role commands through `gc bd`,
+which selects the owning work or infrastructure store and retains its lifecycle
+guards. Outside a city, and for explicit `bd antfly` operator commands, it
+executes the raw native CLI. Its recursion guard fails closed on a bad pin.

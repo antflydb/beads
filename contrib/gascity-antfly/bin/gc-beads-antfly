@@ -62,7 +62,7 @@ def main():
         return 1
     environment = dict(os.environ)
     environment["BEADS_DIR"] = str(root / ".beads")
-    binary = environment.get("ANTFLY_BD_BIN", "bd")
+    binary = environment.get("ANTFLY_BD_BIN") or environment.get("BD_BIN", "bd")
 
     def call(arguments, **kwargs):
         return subprocess.run([binary, *arguments], cwd=root, env=environment,
