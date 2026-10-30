@@ -573,3 +573,20 @@ the indexed path requires at most 24, including comments and incident edges.
 Unfiltered text queries still examine all live issues, and mutation callbacks
 still construct complete transaction snapshots. This does not make every storage
 operation proportional to the result size or qualify a production factory soak.
+
+
+### Native runtime qualification
+
+Stock factory recovery exposed an engine admission bug in ABI-3 builds: table
+enumeration and opening existing table handles used exclusive access, which
+also selected mutation intent and could demand a whole-file allocator proof.
+Antfly commit `0080b92248bbd3aef87f0159872894e9bb63e2ca` keeps exclusive locking
+while marking these catalog operations as reads. Empty native write transactions
+also release their writer admission without entering publication or retirement
+pressure. Use a library containing these fixes for factory qualification.
+
+The engine gates passed 650 Lite storage cases (five opt-in benchmark skips),
+45 native C API cases (one unconfigured managed-embedder quality skip), and all
+169 Beads backend cases across embedded and remote transports without skips.
+These gates validate the fixes; the previous 30-minute factory soak failed on
+storage deadlines, so a healthy stock-factory acceptance result remains pending.
