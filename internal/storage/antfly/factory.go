@@ -39,7 +39,7 @@ func (s *Store) ExecuteFactory(ctx context.Context, op string, args []string, bo
 			if d.IssueID == i.ID && d.Type == types.DepParentChild {
 				out["parent_id"] = d.DependsOnID
 			}
-			if d.IssueID == i.ID && d.Type == types.DepBlocks {
+			if d.IssueID == i.ID && (d.Type == types.DepBlocks || d.Type == types.DepConditionalBlocks) {
 				needs = append(needs, d.DependsOnID)
 			}
 		}

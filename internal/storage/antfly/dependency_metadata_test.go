@@ -132,6 +132,46 @@ func TestDependencyAnnotationsNativeAndRemote(t *testing.T) {
 			}
 			defer s.Close()
 			exerciseDependencyAnnotations(t, s)
+			exerciseConditionalDependencies(t, s)
 		})
+	}
+}
+
+func TestConditionalDependencyReadinessAndCycleFence(t *testing.T) {
+	s, _ := testStore(t)
+	exerciseConditionalDependencies(t, s)
+}
+
+func exerciseConditionalDependencies(t *testing.T, s *Store) {
+	t.Helper()
+	ctx := context.Background()
+	for _, id := range []string{"bd-conditional-source", "bd-conditional-blocker", "bd-conditional-child"} {
+		createTestIssue(t, s, id)
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{IssueID: "bd-conditional-source", DependsOnID: "bd-conditional-blocker", Type: types.DepConditionalBlocks}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{IssueID: "bd-conditional-child", DependsOnID: "bd-conditional-source", Type: types.DepParentChild}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"bd-conditional-source", "bd-conditional-child"} {
+		blocked, _, err := s.IsBlocked(ctx, id)
+		if err != nil || !blocked {
+			t.Fatalf("%s blocked=%v err=%v", id, blocked, err)
+		}
+	}
+	l := &lifecycle{s}
+	if _, err := l.Close(ctx, issueops.CloseRequest{IssueID: "bd-conditional-source", Actor: "test"}); !errors.Is(err, storage.ErrCloseBlocked) {
+		t.Fatalf("conditional close fence: %v", err)
+	}
+	if err := s.AddDependency(ctx, &types.Dependency{IssueID: "bd-conditional-blocker", DependsOnID: "bd-conditional-child", Type: types.DepBlocks}, "test"); !errors.Is(err, issueops.ErrDependencyCycle) {
+		t.Fatalf("combined scheduling cycle: %v", err)
+	}
+	if _, err := l.Close(ctx, issueops.CloseRequest{IssueID: "bd-conditional-blocker", Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	blocked, _, err := s.IsBlocked(ctx, "bd-conditional-source")
+	if err != nil || blocked {
+		t.Fatalf("closed conditional blocker still blocks: %v %v", blocked, err)
 	}
 }

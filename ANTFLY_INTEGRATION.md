@@ -605,3 +605,17 @@ JSON and nil legacy requests fail without publication.
 The full backend target passed 173 cases with zero skips or failures with the
 native library and a remote server configured. Advanced blocking dependency
 kinds remain unsupported; this closes the annotation gap only.
+
+
+Conditional-blocks edges now share direct-blocker readiness, close fences and
+combined scheduling-cycle validation with blocks edges. Blocked parent state
+continues to propagate to children. Factory exports retain these prerequisites;
+batch hierarchy checks and cycle reports use the same scheduling-edge set.
+Embedded and remote regressions cover blocked descendants, rejected closure,
+mixed scheduling cycles and release after blocker closure. Waits-for dynamic
+fanout gates remain explicitly unsupported.
+
+The full backend gate passed 174 cases without skips or failures with native
+mmap and remote transports enabled and Go race instrumentation disabled. The
+race-instrumented full run hit the Go runtime's "too many address space
+collisions for -race mode" failure; it is not a passing race gate.

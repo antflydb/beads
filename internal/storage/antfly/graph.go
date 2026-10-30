@@ -31,7 +31,7 @@ func (st *state) addEdge(from, to string, kind types.DependencyType, actor strin
 	if kind == "" {
 		return storage.ErrValidation
 	}
-	if kind.IsBlockingEdge() && kind != types.DepBlocks {
+	if kind.IsBlockingEdge() && kind != types.DepBlocks && kind != types.DepConditionalBlocks {
 		return errUnsupported("DependencyEditor: advanced blocking edge")
 	}
 	key := edgeKey(from, to)
@@ -51,7 +51,7 @@ func (st *state) addEdge(from, to string, kind types.DependencyType, actor strin
 	st.Edges[key] = &types.Dependency{IssueID: from, DependsOnID: to, Type: kind, CreatedAt: time.Now().UTC(), CreatedBy: actor}
 	// Blocking and hierarchy edges share the cycle check. An unchecked
 	// per-edge request still cannot publish a cyclic final graph.
-	if kind == types.DepBlocks || kind == types.DepParentChild {
+	if types.IsSchedulingEdge(kind) {
 		seen := map[string]bool{}
 		var reaches func(string) bool
 		reaches = func(id string) bool {
@@ -63,7 +63,7 @@ func (st *state) addEdge(from, to string, kind types.DependencyType, actor strin
 			}
 			seen[id] = true
 			for _, d := range st.Edges {
-				if d.IssueID == id && (d.Type == types.DepBlocks || d.Type == types.DepParentChild) && reaches(d.DependsOnID) {
+				if d.IssueID == id && types.IsSchedulingEdge(d.Type) && reaches(d.DependsOnID) {
 					return true
 				}
 			}
@@ -132,7 +132,7 @@ func (st *state) reblock() {
 				continue
 			}
 			external := target == nil && storageops.IsExternalDepTarget(d.IssueID, d.DependsOnID)
-			blocked := (d.Type == types.DepBlocks && !external && (target == nil || !resolved(target.Issue.Status))) || (d.Type == types.DepParentChild && target != nil && target.Issue.IsBlocked)
+			blocked := ((d.Type == types.DepBlocks || d.Type == types.DepConditionalBlocks) && !external && (target == nil || !resolved(target.Issue.Status))) || (d.Type == types.DepParentChild && target != nil && target.Issue.IsBlocked)
 			if blocked && !source.Issue.IsBlocked {
 				source.Issue.IsBlocked = true
 				changed = true

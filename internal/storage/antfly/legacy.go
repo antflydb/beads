@@ -118,7 +118,7 @@ func (s *Store) GetBlockingInfoForIssues(ctx context.Context, ids []string) (map
 		if d.Type == types.DepParentChild && slices.Contains(ids, d.IssueID) {
 			parents[d.IssueID] = d.DependsOnID
 		}
-		if d.Type != types.DepBlocks {
+		if d.Type != types.DepBlocks && d.Type != types.DepConditionalBlocks {
 			continue
 		}
 		target := st.Issues[d.DependsOnID]

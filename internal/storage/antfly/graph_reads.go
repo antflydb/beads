@@ -50,7 +50,7 @@ func (g *graph) DetectCycles(ctx context.Context, req issueops.DetectCyclesReque
 	}
 	adjacency := map[string][]string{}
 	for _, d := range st.Edges {
-		if d.Type == types.DepBlocks {
+		if types.IsSchedulingEdge(d.Type) {
 			adjacency[d.IssueID] = append(adjacency[d.IssueID], d.DependsOnID)
 		}
 	}
@@ -90,7 +90,7 @@ func (s *Store) IsBlocked(ctx context.Context, id string) (bool, []string, error
 	}
 	blockers := []string{}
 	for _, d := range st.Edges {
-		if d.IssueID == id && d.Type == types.DepBlocks {
+		if d.IssueID == id && (d.Type == types.DepBlocks || d.Type == types.DepConditionalBlocks) {
 			if target := st.Issues[d.DependsOnID]; target == nil || !resolved(target.Issue.Status) {
 				blockers = append(blockers, d.DependsOnID)
 			}

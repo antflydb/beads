@@ -159,7 +159,7 @@ func (b *batchApplier) ApplyBatch(ctx context.Context, request issueops.ApplyBat
 			return e
 		}
 		for index, item := range plan.Items {
-			if item.DepAdd == nil || item.DepAdd.Type != types.DepBlocks {
+			if item.DepAdd == nil || (item.DepAdd.Type != types.DepBlocks && item.DepAdd.Type != types.DepConditionalBlocks) {
 				continue
 			}
 			from, to := resolve(item.DepAdd.Source), resolve(item.DepAdd.Target)

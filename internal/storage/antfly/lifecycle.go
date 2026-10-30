@@ -239,7 +239,7 @@ func (st *state) canClose(i *types.Issue, actor string, force bool) error {
 	}
 	children := 0
 	for _, d := range st.Edges {
-		if d.IssueID == i.ID && d.Type == types.DepBlocks {
+		if d.IssueID == i.ID && (d.Type == types.DepBlocks || d.Type == types.DepConditionalBlocks) {
 			target := st.Issues[d.DependsOnID]
 			if target == nil && storageops.IsExternalDepTarget(d.IssueID, d.DependsOnID) {
 				continue
