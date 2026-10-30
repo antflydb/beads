@@ -503,3 +503,13 @@ Legacy formula compilation emits `step` work records. Antfly accepts and
 advertises that fixed factory type alongside convoys and merge requests, so
 native batch creation and ordinary CLI type validation agree. Native and remote
 batch contract tests now use `step` rather than substituting `task`.
+
+
+Remote lookups retry only HTTP 503 responses carrying the exact engine code
+`storage_read_temporarily_unavailable` with `retryable: true`. Backoff is
+bounded by five seconds and the caller's context. Generic unavailable bodies,
+other status codes and ambiguous network errors return immediately. No write
+or unknown commit result is replayed. Protocol tests verify the refusal shape,
+recovery, cancellation and absence of write retries; the full native and remote
+backend regression suite passes. Live concurrent factory qualification remains
+in progress.

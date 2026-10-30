@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -533,5 +534,65 @@ func TestAntflySearchIssueIDsForCLIResolutionAndTransaction(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRemoteReadAdmissionRetryIsExplicitAndReadOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name, body       string
+		status, attempts int
+	}{
+		{"read admission", `{"code":"storage_read_temporarily_unavailable","retryable":true}`, 503, 2},
+		{"generic unavailable", `{"message":"unavailable"}`, 503, 1},
+		{"not retryable", `{"code":"storage_read_temporarily_unavailable","retryable":false}`, 503, 1},
+		{"wrong status", `{"code":"storage_read_temporarily_unavailable","retryable":true}`, 500, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempt := attempts.Add(1)
+				if attempt == 1 {
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+					return
+				}
+				w.Header().Set("X-Antfly-Version", "17")
+				_, _ = w.Write([]byte(`{"committed":true}`))
+			}))
+			defer server.Close()
+			remote := &remote{target: Target{URL: server.URL, Table: "beads", Workspace: "work"}, client: server.Client()}
+			data, v, err := remote.ReadDocument(context.Background(), "work")
+			if int(attempts.Load()) != tc.attempts {
+				t.Fatalf("read attempts=%d want %d", attempts.Load(), tc.attempts)
+			}
+			if tc.attempts == 2 && (err != nil || v != 17 || string(data) != `{"committed":true}`) {
+				t.Fatalf("recovered read: %s %d %v", data, v, err)
+			}
+			if tc.attempts == 1 && err == nil {
+				t.Fatal("unexpected read success")
+			}
+			attempts.Store(0)
+			err = remote.WriteDocuments(context.Background(), nil, map[string]json.RawMessage{"row": json.RawMessage(`{}`)})
+			if attempts.Load() != 1 || err == nil {
+				t.Fatalf("write replayed: attempts=%d err=%v", attempts.Load(), err)
+			}
+		})
+	}
+}
+
+func TestRemoteReadAdmissionRetryHonorsCancellation(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(503)
+		_, _ = w.Write([]byte(`{"code":"storage_read_temporarily_unavailable","retryable":true}`))
+	}))
+	defer server.Close()
+	r := &remote{target: Target{URL: server.URL, Table: "beads", Workspace: "work"}, client: server.Client()}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, _, err := r.ReadDocument(ctx, "work")
+	if !errors.Is(err, context.DeadlineExceeded) || attempts.Load() < 1 {
+		t.Fatalf("cancellation: attempts=%d err=%v", attempts.Load(), err)
 	}
 }

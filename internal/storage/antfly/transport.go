@@ -195,7 +195,37 @@ func (r *remote) Load(ctx context.Context) ([]byte, uint64, error) {
 }
 
 func (r *remote) ReadDocument(ctx context.Context, key string) ([]byte, uint64, error) {
-	b, h, status, err := r.call(ctx, http.MethodGet, "/db/v1/tables/"+url.PathEscape(r.target.Table)+"/documents/"+url.PathEscape(key), nil)
+	// Retry only the engine's explicit read-admission refusal. This never
+	// replays writes, ambiguous network failures, or arbitrary HTTP 503 bodies.
+	retryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	callCtx := ctx
+	delay := 5 * time.Millisecond
+	var b []byte
+	var h http.Header
+	var status int
+	var err error
+	for {
+		b, h, status, err = r.call(callCtx, http.MethodGet, "/db/v1/tables/"+url.PathEscape(r.target.Table)+"/documents/"+url.PathEscape(key), nil)
+		var refusal struct {
+			Code      string `json:"code"`
+			Retryable bool   `json:"retryable"`
+		}
+		if status != http.StatusServiceUnavailable || json.Unmarshal(b, &refusal) != nil || refusal.Code != "storage_read_temporarily_unavailable" || !refusal.Retryable {
+			break
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-retryCtx.Done():
+			timer.Stop()
+			return nil, 0, retryCtx.Err()
+		case <-timer.C:
+		}
+		callCtx = retryCtx
+		if delay < 80*time.Millisecond {
+			delay *= 2
+		}
+	}
 	if status == http.StatusNotFound {
 		return nil, 0, nil
 	}
