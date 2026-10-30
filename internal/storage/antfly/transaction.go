@@ -76,6 +76,9 @@ func (t *transaction) GetIssue(ctx context.Context, id string) (*types.Issue, er
 func (t *transaction) SearchIssues(ctx context.Context, q string, f types.IssueFilter) ([]*types.Issue, error) {
 	return t.s.SearchIssues(ctx, q, f)
 }
+func (t *transaction) SearchIssueIDs(ctx context.Context, q string, f types.IssueFilter) ([]string, error) {
+	return t.s.SearchIssueIDs(ctx, q, f)
+}
 func (t *transaction) AddDependency(ctx context.Context, d *types.Dependency, a string) error {
 	return t.s.AddDependency(ctx, d, a)
 }

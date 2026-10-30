@@ -101,7 +101,7 @@ func (st *state) search(query string, f types.IssueFilter) ([]*types.IssueWithCo
 		if !contains(i.Title, f.TitleSearch) || !contains(i.Title, f.TitleContains) || !contains(i.Description, f.DescriptionContains) || !contains(i.Notes, f.NotesContains) {
 			continue
 		}
-		if query != "" && id != query && !contains(i.Title+" "+i.Description+" "+i.Notes, query) {
+		if query != "" && !contains(id, query) && !contains(i.Title+" "+i.Description+" "+i.Notes, query) {
 			continue
 		}
 		var metadata map[string]any
@@ -321,6 +321,21 @@ func (s *Store) SearchIssues(ctx context.Context, q string, f types.IssueFilter)
 	}
 	return out, e
 }
+
+// SearchIssueIDs shares filtering, ordering, pagination and wisp semantics
+// with SearchIssues, including substring ID matching used by CLI resolution.
+func (s *Store) SearchIssueIDs(ctx context.Context, q string, f types.IssueFilter) ([]string, error) {
+	rows, err := s.SearchIssuesWithCounts(ctx, q, f)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	return ids, nil
+}
+
 func (s *Store) SearchIssuesWithCounts(ctx context.Context, q string, f types.IssueFilter) ([]*types.IssueWithCounts, error) {
 	st, _, e := s.load(ctx)
 	if e != nil {

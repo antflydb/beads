@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/backends"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/issueops"
@@ -487,5 +488,39 @@ func TestNativeDatabaseArchivePreservesSeparateWorkspaces(t *testing.T) {
 		if e != nil || !strings.Contains(string(raw), `"schema":"`+workspace+`"`) {
 			t.Fatalf("restored %s: %s %v", workspace, raw, e)
 		}
+	}
+}
+
+func TestEmbeddedReadRetriesOnlyBusy(t *testing.T) {
+	attempts := 0
+	err := retryEmbeddedRead(context.Background(), func() error {
+		attempts++
+		if attempts < 3 {
+			return errEmbeddedBusy
+		}
+		return nil
+	})
+	if err != nil || attempts != 3 {
+		t.Fatalf("busy retry: attempts=%d error=%v", attempts, err)
+	}
+	for _, failure := range []error{errIndeterminate, errConflict, storage.ErrNotFound} {
+		attempts = 0
+		err = retryEmbeddedRead(context.Background(), func() error { attempts++; return failure })
+		if !errors.Is(err, failure) || attempts != 1 {
+			t.Fatalf("replayed %v: attempts=%d error=%v", failure, attempts, err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	attempts = 0
+	err = retryEmbeddedRead(ctx, func() error { attempts++; return nil })
+	if !errors.Is(err, context.Canceled) || attempts != 0 {
+		t.Fatalf("cancellation: attempts=%d error=%v", attempts, err)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	err = retryEmbeddedRead(ctx, func() error { return errEmbeddedBusy })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deadline: %v", err)
 	}
 }

@@ -58,3 +58,17 @@ multi-operation application callbacks are required.
 Protocol and pack references:
 [executable Beads providers](https://github.com/gastownhall/gascity/blob/main/docs/reference/exec-beads-provider.md),
 [pack specification](https://github.com/gastownhall/gascity/blob/main/docs/reference/specs/pack-spec.md).
+
+For a service-managed supervisor, include the explicit runtime environment in
+Gas City's supported service environment allowlist before starting the city:
+
+```sh
+export GC_SUPERVISOR_ENV="ANTFLY_BD_BIN ANTFLY_LIBRARY_PATH BD_DISABLE_METRICS BD_DISABLE_EVENT_FLUSH"
+```
+
+New embedded initialization persists an explicit `ANTFLY_LIBRARY_PATH` into
+`.beads/antfly.json`, so later opens can find the same library without inheriting
+the initializing shell. For an older descriptor with no `library`, set that
+field to the qualified absolute library path or retain the environment override.
+The pinned `ANTFLY_BD_BIN` must still be available to the provider. A failed
+prefix read reports its actual runtime error and leaves routing unchanged.

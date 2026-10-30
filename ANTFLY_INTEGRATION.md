@@ -433,3 +433,28 @@ heads fall back to the original read path until their next write. A 1,000-issue
 oracle verifies exact aggregate contents, detached caller buffers and bounded
 document reads. The complete backend gate passed against embedded and remote
 Antfly after this addition; broad queries and writes still load domain state.
+
+## Stock factory runtime corrections
+
+The executable provider persists an explicit embedded library path at new
+initialization, so reopening a work scope does not depend on the initializing
+shell environment. A failed prefix read reports its underlying failure; only
+a successful, unequal prefix read is a routing mismatch. Gas City service
+environment setup is documented in the provider README.
+
+Embedded opens, table discovery and document reads retry only native BUSY
+responses with bounded backoff and cancellation. Mutation and indeterminate
+commit outcomes retain their existing handling.
+
+The legacy storage facade supplies SearchIssueIDs, including staged transaction
+reads, with the same filters, sort and pagination as issue searches. Substring
+ID matching supports the CLI partial-ID resolver used during worker claims.
+External dependency targets use shared Beads classification: missing local
+targets are refused; foreign IDs and external: references are retained without
+a local foreign key. Gas City's split-store owner gate must resolve foreign
+blockers before dispatch and claim. A raw work-store read alone cannot certify
+cross-store readiness.
+
+The full backend suite passes against embedded and remote Antfly with these
+corrections. A live two-rig bundled workflow exposed the claim lookup gap;
+completion and crash/redelivery qualification remain in progress.

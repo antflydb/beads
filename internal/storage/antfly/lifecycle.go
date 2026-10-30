@@ -241,6 +241,9 @@ func (st *state) canClose(i *types.Issue, actor string, force bool) error {
 	for _, d := range st.Edges {
 		if d.IssueID == i.ID && d.Type == types.DepBlocks {
 			target := st.Issues[d.DependsOnID]
+			if target == nil && storageops.IsExternalDepTarget(d.IssueID, d.DependsOnID) {
+				continue
+			}
 			if target == nil || !resolved(target.Issue.Status) {
 				return storage.ErrCloseBlocked
 			}

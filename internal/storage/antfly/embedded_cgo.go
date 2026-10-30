@@ -128,6 +128,35 @@ type embedded struct {
 	key    string
 }
 
+// Busy is a pre-admission failure for opens and reads. Retry those operations
+// only; mutations and unknown outcomes must retain their original semantics.
+var errEmbeddedBusy = errors.New("embedded Antfly temporarily busy")
+
+func retryEmbeddedRead(ctx context.Context, operation func() error) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	delay := 5 * time.Millisecond
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := operation()
+		if !errors.Is(err, errEmbeddedBusy) {
+			return err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		if delay < 80*time.Millisecond {
+			delay *= 2
+		}
+	}
+}
+
 func openEmbedded(t Target) (Transport, error) {
 	library := t.Library
 	if library == "" {
@@ -158,17 +187,17 @@ func openEmbedded(t Target) (Transport, error) {
 		C.beads_close(n)
 		return nil, statErr
 	}
-	if code := C.beads_open(n, path, create); code != C.ANTFLY_OK {
+	if err := retryEmbeddedRead(context.Background(), func() error { return nativeError(C.beads_open(n, path, create)) }); err != nil {
 		C.beads_close(n)
-		return nil, nativeError(code)
+		return nil, fmt.Errorf("open embedded Antfly: %w", err)
 	}
 	name, release := nativeSlice([]byte(t.Table))
 	defer release()
 	var tablesOut C.antfly_buffer
-	code := C.beads_list_tables(n, &tablesOut)
-	if code != C.ANTFLY_OK {
+	err := retryEmbeddedRead(context.Background(), func() error { return nativeError(C.beads_list_tables(n, &tablesOut)) })
+	if err != nil {
 		C.beads_close(n)
-		return nil, nativeError(code)
+		return nil, fmt.Errorf("list embedded Antfly tables: %w", err)
 	}
 	var names []string
 	decodeErr := json.Unmarshal(C.GoBytes(unsafe.Pointer(tablesOut.ptr), C.int(tablesOut.len)), &names)
@@ -177,6 +206,7 @@ func openEmbedded(t Target) (Transport, error) {
 		C.beads_close(n)
 		return nil, decodeErr
 	}
+	var code C.antfly_error_code
 	createdTable := !slices.Contains(names, t.Table)
 	if createdTable {
 		code = C.beads_create_table(n, name)
@@ -185,10 +215,9 @@ func openEmbedded(t Target) (Transport, error) {
 			return nil, nativeError(code)
 		}
 	}
-	code = C.beads_table(n, name)
-	if code != C.ANTFLY_OK {
+	if err := retryEmbeddedRead(context.Background(), func() error { return nativeError(C.beads_table(n, name)) }); err != nil {
 		C.beads_close(n)
-		return nil, nativeError(code)
+		return nil, fmt.Errorf("open embedded Antfly table: %w", err)
 	}
 	if createdTable {
 		if code = C.beads_add_graph(n); code != C.ANTFLY_OK {
@@ -204,6 +233,12 @@ func nativeSlice(b []byte) (C.antfly_slice, func()) {
 	return C.antfly_slice{ptr: (*C.uint8_t)(p), len: C.size_t(len(b))}, func() { C.free(p) }
 }
 func nativeError(code C.antfly_error_code) error {
+	if code == C.ANTFLY_OK {
+		return nil
+	}
+	if code == C.ANTFLY_BUSY {
+		return errEmbeddedBusy
+	}
 	if code == C.ANTFLY_NOT_FOUND {
 		return storage.ErrNotFound
 	}
@@ -234,20 +269,20 @@ func (e *embedded) ReadDocument(ctx context.Context, name string) ([]byte, uint6
 	var version C.uint64_t
 	// Read the fence BEFORE the document. A concurrent commit can force a
 	// harmless CAS retry but cannot pair stale data with a newer version.
-	code := C.beads_timestamp(e.native, key, &version)
-	if code == C.ANTFLY_NOT_FOUND {
+	err := retryEmbeddedRead(ctx, func() error { return nativeError(C.beads_timestamp(e.native, key, &version)) })
+	if errors.Is(err, storage.ErrNotFound) {
 		return nil, 0, nil
 	}
-	if code != C.ANTFLY_OK {
-		return nil, 0, nativeError(code)
+	if err != nil {
+		return nil, 0, err
 	}
 	var out C.antfly_buffer
-	code = C.beads_lookup(e.native, key, &out)
-	if code == C.ANTFLY_NOT_FOUND {
+	err = retryEmbeddedRead(ctx, func() error { return nativeError(C.beads_lookup(e.native, key, &out)) })
+	if errors.Is(err, storage.ErrNotFound) {
 		return nil, 0, nil
 	}
-	if code != C.ANTFLY_OK {
-		return nil, 0, nativeError(code)
+	if err != nil {
+		return nil, 0, err
 	}
 	defer C.beads_free_buffer(e.native, &out)
 	if out.len > maxStateBytes {

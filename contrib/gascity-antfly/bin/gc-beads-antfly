@@ -78,12 +78,22 @@ def main():
             if init_prefix:
                 current_prefix = call(["config", "get", "issue_prefix"],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if current_prefix.returncode or current_prefix.stdout.decode().strip() != init_prefix:
-                    print("scope prefix does not match positional init prefix; existing routing was retained", file=sys.stderr)
+                if current_prefix.returncode:
+                    print("cannot verify native scope prefix; existing routing was retained", file=sys.stderr)
+                    sys.stderr.buffer.write(current_prefix.stderr)
+                    return current_prefix.returncode
+                actual_prefix = current_prefix.stdout.decode().strip()
+                if actual_prefix != init_prefix:
+                    print(f"scope prefix {actual_prefix!r} does not match positional init prefix {init_prefix!r}; existing routing was retained", file=sys.stderr)
                     return 1
         else:
             arguments = ["antfly", "init", "--prefix", init_prefix or environment.get("GC_BEADS_PREFIX", "bd")]
             endpoint = environment.get("GC_ANTFLY_URL")
+            if not endpoint and environment.get("ANTFLY_LIBRARY_PATH"):
+                # Persist the explicit runtime path so a service restart does
+                # not depend on inheriting the initializing shell's environment.
+                library = str(Path(environment["ANTFLY_LIBRARY_PATH"]).expanduser().resolve())
+                arguments.extend(["--library", library])
             if endpoint:
                 workspace = environment.get("GC_ANTFLY_WORKSPACE") or (
                     "gc-" + hashlib.sha256(str(root).encode()).hexdigest()[:24]

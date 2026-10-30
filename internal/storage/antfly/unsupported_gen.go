@@ -467,11 +467,6 @@ func (unsupportedDoltStorage) RunInIssueLifecycleTransaction(_ context.Context, 
 	return
 }
 
-func (unsupportedDoltStorage) SearchIssueIDs(_ context.Context, _ string, _ types.IssueFilter) (_ []string, err error) {
-	err = errUnsupported("SearchIssueIDs")
-	return
-}
-
 func (unsupportedDoltStorage) SearchIssueSummaries(_ context.Context, _ string, _ types.IssueFilter) (_ []*types.IssueSummary, err error) {
 	err = errUnsupported("SearchIssueSummaries")
 	return
@@ -542,4 +537,4 @@ func (unsupportedDoltStorage) UpdateIssueType(_ context.Context, _ string, _ str
 	return
 }
 
-// NOTE: partial shell (105 of 205 methods generated; 100 left to this package's hand-written set).
+// NOTE: partial shell (104 of 205 methods generated; 101 left to this package's hand-written set).

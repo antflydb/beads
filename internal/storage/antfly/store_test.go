@@ -465,3 +465,73 @@ func TestAntflyFactoryWorkTypes(t *testing.T) {
 		}
 	}
 }
+
+// External edges retain the shared Beads classification. Gas City's split
+// store gate resolves the owner and enforces foreign readiness; this store
+// must preserve the edge without inventing a local target or lease.
+func TestAntflyExternalDependenciesPreserveRoutingContract(t *testing.T) {
+	ctx := context.Background()
+	for _, target := range []string{"other-blocker", "external:other-blocker", "external:rig:capability"} {
+		t.Run(target, func(t *testing.T) {
+			s, _ := testStore(t)
+			createTestIssue(t, s, "bd-source")
+			if err := s.AddDependency(ctx, &types.Dependency{IssueID: "bd-source", DependsOnID: target, Type: types.DepBlocks}, "test"); err != nil {
+				t.Fatal(err)
+			}
+			issue, err := s.GetIssue(ctx, "bd-source")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if issue.IsBlocked || len(issue.Dependencies) != 1 || issue.Dependencies[0].DependsOnID != target {
+				t.Fatalf("external edge changed: %+v", issue)
+			}
+			if _, err = (&lifecycle{s}).Close(ctx, issueops.CloseRequest{Actor: "test", IssueID: "bd-source"}); err != nil {
+				t.Fatalf("local lifecycle must leave foreign enforcement to owner router: %v", err)
+			}
+		})
+	}
+	s, _ := testStore(t)
+	createTestIssue(t, s, "bd-source")
+	if err := s.AddDependency(ctx, &types.Dependency{IssueID: "bd-source", DependsOnID: "bd-missing", Type: types.DepBlocks}, "test"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("missing local target accepted: %v", err)
+	}
+}
+
+func TestAntflySearchIssueIDsForCLIResolutionAndTransaction(t *testing.T) {
+	ctx := context.Background()
+	s, _ := testStore(t)
+	for _, id := range []string{"bd-hash-one", "bd-hash-two", "bd-other"} {
+		createTestIssue(t, s, id)
+	}
+	for _, query := range []string{"bd-hash-one", "hash", "HASH", "missing"} {
+		rows, err := s.SearchIssues(ctx, query, types.IssueFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids, err := s.SearchIssueIDs(ctx, query, types.IssueFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) != len(rows) {
+			t.Fatalf("projection differs: %v %v", ids, rows)
+		}
+		for n, row := range rows {
+			if ids[n] != row.ID {
+				t.Fatalf("order differs: %v", ids)
+			}
+		}
+		if strings.EqualFold(query, "hash") && len(ids) != 2 {
+			t.Fatalf("partial id lookup: %v", ids)
+		}
+	}
+	err := s.RunInTransaction(ctx, "test", func(tx storage.Transaction) error {
+		ids, err := tx.SearchIssueIDs(ctx, "hash", types.IssueFilter{Limit: 1})
+		if err == nil && len(ids) != 1 {
+			t.Fatalf("transaction limit: %v", ids)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

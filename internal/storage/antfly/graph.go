@@ -23,7 +23,9 @@ func (st *state) addEdge(from, to string, kind types.DependencyType, actor strin
 	if _, e := st.issue(from); e != nil {
 		return e
 	}
-	if _, e := st.issue(to); e != nil {
+	// External references carry no local foreign key. The owner router is
+	// responsible for cross-store readiness; retain the reference verbatim.
+	if _, e := st.issue(to); e != nil && !storageops.IsExternalDepTarget(from, to) {
 		return e
 	}
 	if kind == "" {
@@ -88,7 +90,8 @@ func (st *state) reblock() {
 			if source == nil || source.Issue.Status == types.StatusClosed || source.Issue.Status == types.StatusPinned {
 				continue
 			}
-			blocked := (d.Type == types.DepBlocks && (target == nil || !resolved(target.Issue.Status))) || (d.Type == types.DepParentChild && target != nil && target.Issue.IsBlocked)
+			external := target == nil && storageops.IsExternalDepTarget(d.IssueID, d.DependsOnID)
+			blocked := (d.Type == types.DepBlocks && !external && (target == nil || !resolved(target.Issue.Status))) || (d.Type == types.DepParentChild && target != nil && target.Issue.IsBlocked)
 			if blocked && !source.Issue.IsBlocked {
 				source.Issue.IsBlocked = true
 				changed = true

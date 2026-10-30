@@ -90,11 +90,6 @@ func (unsupportedTransaction) RemoveDependencyWithOptions(_ context.Context, _ s
 	return
 }
 
-func (unsupportedTransaction) SearchIssueIDs(_ context.Context, _ string, _ types.IssueFilter) (_ []string, err error) {
-	err = errUnsupported("SearchIssueIDs")
-	return
-}
-
 func (unsupportedTransaction) SetLocalMetadata(_ context.Context, _ string, _ string) (err error) {
 	err = errUnsupported("SetLocalMetadata")
 	return
@@ -110,4 +105,4 @@ func (unsupportedTransaction) UpdateIssue(_ context.Context, _ string, _ map[str
 	return
 }
 
-// NOTE: partial shell (19 of 34 methods generated; 15 left to this package's hand-written set).
+// NOTE: partial shell (18 of 34 methods generated; 16 left to this package's hand-written set).
