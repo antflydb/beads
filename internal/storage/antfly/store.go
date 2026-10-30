@@ -127,8 +127,15 @@ func openWorkspaceWith(ctx context.Context, dir string, opts backends.OpenOption
 	}
 	sum := sha256.Sum256([]byte(database + "\x00" + namespace + "\x00" + t.Table + "\x00" + t.Workspace + "\x00" + cfg.ProjectID))
 	s.memorySpace = fmt.Sprintf("beads-%x", sum[:16])
-	st, _, err := s.load(ctx)
-	if err == nil && st.Config["issue_prefix"] == "" {
+	values, indexed, err := s.indexedConfig(ctx, []string{"issue_prefix"})
+	if !indexed {
+		var st *state
+		st, _, err = s.load(ctx)
+		if err == nil {
+			values = st.Config
+		}
+	}
+	if err == nil && values["issue_prefix"] == "" {
 		err = storage.ErrNotInitialized
 	}
 	if err != nil {
@@ -238,6 +245,9 @@ func (s *Store) GetCurrentCommit(ctx context.Context) (string, error) {
 func (s *Store) GetUnderlyingDB() any { return nil }
 
 func (s *Store) GetConfig(ctx context.Context, key string) (string, error) {
+	if values, handled, err := s.indexedConfig(ctx, []string{key}); handled {
+		return values[key], err
+	}
 	st, _, err := s.load(ctx)
 	if err != nil {
 		return "", err

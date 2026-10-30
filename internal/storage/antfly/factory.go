@@ -51,6 +51,15 @@ func (s *Store) ExecuteFactory(ctx context.Context, op string, args []string, bo
 	case "retention":
 		return s.factoryRetention(ctx, args, actor)
 	case "health":
+		if values, handled, err := s.indexedConfig(ctx, []string{"issue_prefix"}); handled {
+			if err != nil {
+				return nil, err
+			}
+			if values["issue_prefix"] == "" {
+				return nil, fmt.Errorf("workspace is not initialized")
+			}
+			return encode(map[string]any{"backend": Backend, "project_id": values["project_id"], "ready": true})
+		}
 		st, _, err := s.load(ctx)
 		if err != nil {
 			return nil, err

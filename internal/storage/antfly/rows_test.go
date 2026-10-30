@@ -558,6 +558,11 @@ func TestCoreIndexedIssueReadsBoundedRowsAndPreservesAggregate(t *testing.T) {
 	}
 	store := New(transport, false)
 	store.expectedProject = "indexed-project"
+	svc.reads = 0
+	config, indexed, configErr := store.indexedConfig(ctx, []string{"issue_prefix"})
+	if configErr != nil || !indexed || config["issue_prefix"] != "bd" || svc.reads > 6 {
+		t.Fatalf("unbounded indexed open/config: %v %v %v reads=%d", config, indexed, configErr, svc.reads)
+	}
 	want := st.hydrate(id)
 	svc.reads = 0
 	got, err := store.GetIssue(ctx, id)

@@ -185,3 +185,49 @@ func (s *Store) indexedIssue(ctx context.Context, id string) (*types.Issue, bool
 	}
 	return nil, true, errConflict
 }
+
+// indexedConfig validates the header and project identity without scanning
+// unrelated work/history when a process opens a row-format workspace.
+func (s *Store) indexedConfig(ctx context.Context, keys []string) (map[string]string, bool, error) {
+	r, ok := s.transport.(*rowTransport)
+	if !ok || !r.domainProjection {
+		return nil, false, nil
+	}
+	raw, _, err := r.documentTransport.Load(ctx)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(raw) == 0 {
+		return nil, true, storage.ErrNotInitialized
+	}
+	head, err := readRowHead(raw)
+	if err != nil {
+		return nil, true, err
+	}
+	if head == nil {
+		return nil, false, nil
+	}
+	if string(head.Fields["format"]) != "1" {
+		return nil, true, fmt.Errorf("unsupported indexed workspace format")
+	}
+	logical := []string{"config/project_id"}
+	for _, key := range keys {
+		logical = append(logical, "config/"+key)
+	}
+	rows, err := r.readLogicalRows(ctx, head, logical)
+	if err != nil {
+		return nil, true, err
+	}
+	values := map[string]string{}
+	for key, raw := range rows {
+		var value string
+		if err = json.Unmarshal(raw, &value); err != nil {
+			return nil, true, err
+		}
+		values[strings.TrimPrefix(key, "config/")] = value
+	}
+	if s.expectedProject != "" && values["project_id"] != s.expectedProject {
+		return nil, true, fmt.Errorf("indexed workspace project identity mismatch")
+	}
+	return values, true, nil
+}
