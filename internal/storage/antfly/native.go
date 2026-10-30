@@ -9,6 +9,12 @@ import (
 	"net/url"
 )
 
+// privateSnapshotTableSchema leaves public issue projections searchable while
+// storing immutable payloads and head directories without full-text indexing.
+// It is applied only when provisioning a new table; existing schemas are never
+// changed by opening a workspace.
+const privateSnapshotTableSchema = `{"default_type":"beads","document_schemas":{"beads":{"schema":{"type":"object","properties":{"_beads_immutable_json":{"type":"string","x-antfly-index":false},"fields":{"type":"object","x-antfly-index":false},"pages":{"type":"object","x-antfly-index":false}},"additionalProperties":true}}}}`
+
 type nativeTransport interface {
 	Native(context.Context, string, string, json.RawMessage) (json.RawMessage, error)
 }
@@ -87,7 +93,7 @@ func ensureTableWith(ctx context.Context, t Target, opts backends.OpenOptions) (
 		path := "/db/v1/tables/" + url.PathEscape(t.Table)
 		_, _, status, e := r.call(ctx, http.MethodGet, path, nil)
 		if status == http.StatusNotFound {
-			_, _, _, e = r.call(ctx, http.MethodPost, path, map[string]any{"num_shards": 1, "storage": map[string]any{"engine": "local", "dense_embeddings": "primary_lsm"}})
+			_, _, _, e = r.call(ctx, http.MethodPost, path, map[string]any{"num_shards": 1, "schema": json.RawMessage(privateSnapshotTableSchema), "storage": map[string]any{"engine": "local", "dense_embeddings": "primary_lsm"}})
 		}
 		if e != nil {
 			_ = tr.Close()

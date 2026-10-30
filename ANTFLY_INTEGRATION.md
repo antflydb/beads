@@ -642,3 +642,23 @@ failures. A focused native and remote gate also checked point-read flags after
 every fanout transition. These tests cover create defaults, all/any
 children, late children, spawner-ID authority, also-blocks close fences,
 legacy defaults and rejected foreign-gate atomicity.
+
+
+### Private snapshot indexing
+
+New embedded and remote tables use a permissive document schema that stores
+`_beads_immutable_json`, head `fields`, and page directories without full-text
+indexing. Public projection fields such as issue titles remain searchable.
+The schema applies only during table creation; opening an existing workspace
+preserves its schema and indexes. Existing tables require an explicit schema
+version update and index rebuild, followed by a completed backfill before
+performance or search behavior is assessed.
+
+A real embedded/remote regression verified that private nested head fields and
+page directories were searchable under the previous defaults. The new schema
+keeps their data intact while excluding them from search, and preserves public
+title search. The full backend gate passed 178 cases with no skips or failures.
+On a checkpoint copy, the explicit schema/rebuild/backfill sequence preserved
+public title search, excluded private text, and eliminated busy responses in
+eight alternating-process rounds. This does not establish a healthy factory
+soak or complete migration of existing tables.

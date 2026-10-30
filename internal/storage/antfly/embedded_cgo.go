@@ -84,8 +84,8 @@ static antfly_error_code beads_table(beads_antfly *a,antfly_slice name) {
     return a->open_table(a->root,name,&a->table);
 }
 static antfly_error_code beads_list_tables(beads_antfly*a,antfly_buffer*out){return a->list_tables(a->root,out);}
-static antfly_error_code beads_create_table(beads_antfly *a,antfly_slice name) {
-    antfly_slice schema={(const uint8_t*)"{}",2}; return a->create_table(a->root,name,schema);
+static antfly_error_code beads_create_table(beads_antfly *a,antfly_slice name,antfly_slice schema) {
+    return a->create_table(a->root,name,schema);
 }
 static antfly_error_code beads_timestamp(beads_antfly*a,antfly_slice key,uint64_t*out){return a->timestamp(a->table,key,out);}
 static antfly_error_code beads_lookup(beads_antfly*a,antfly_slice key,antfly_buffer*out){return a->lookup(a->table,key,out);}
@@ -210,7 +210,9 @@ func openEmbedded(t Target) (Transport, error) {
 	var code C.antfly_error_code
 	createdTable := !slices.Contains(names, t.Table)
 	if createdTable {
-		code = C.beads_create_table(n, name)
+		schema, releaseSchema := nativeSlice([]byte(privateSnapshotTableSchema))
+		code = C.beads_create_table(n, name, schema)
+		releaseSchema()
 		if code != C.ANTFLY_OK {
 			C.beads_close(n)
 			return nil, nativeError(code)
