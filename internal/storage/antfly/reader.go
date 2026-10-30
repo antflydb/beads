@@ -35,7 +35,7 @@ func rejectFields(value any, allowed string) error {
 }
 
 func (st *state) search(query string, f types.IssueFilter) ([]*types.IssueWithCounts, error) {
-	if e := rejectFields(f, "Status Statuses Priority IssueType Assignee Labels LabelsAny ExcludeLabels TitleSearch IDs IDPrefix Limit TitleContains DescriptionContains NotesContains NoAssignee NoLabels ExcludeStatus ExcludeTypes Ephemeral Pinned IsTemplate IsBlocked ParentID NoParent IncludeDependencies SkipWisps NoIDShrink SortBy SortDesc Offset MaxRows MaxRowsSource MetadataFields HasMetadataKey"); e != nil {
+	if e := rejectFields(f, "Status Statuses Priority IssueType Assignee Labels LabelsAny ExcludeLabels TitleSearch IDs IDPrefix Limit TitleContains DescriptionContains NotesContains NoAssignee NoLabels ExcludeStatus ExcludeTypes Ephemeral Pinned IsTemplate IsBlocked ParentID NoParent IncludeDependencies SkipWisps NoIDShrink SortBy SortDesc Offset MaxRows MaxRowsSource MetadataFields HasMetadataKey CreatedAfter CreatedBefore UpdatedAfter UpdatedBefore ClosedAfter ClosedBefore StartedAfter StartedBefore DeferAfter DeferBefore DueAfter DueBefore Deferred Overdue PriorityMin PriorityMax EmptyDescription ExternalRef ExternalRefContains MolType WispType"); e != nil {
 		return nil, e
 	}
 	out := []*types.IssueWithCounts{}
@@ -54,6 +54,24 @@ func (st *state) search(query string, f types.IssueFilter) ([]*types.IssueWithCo
 			continue
 		}
 		if (f.Ephemeral != nil && *f.Ephemeral != storageops.IsWisp(i)) || (f.SkipWisps && storageops.IsWisp(i)) || f.IsTemplate != nil && *f.IsTemplate || f.Pinned != nil && *f.Pinned != i.Pinned || f.IsBlocked != nil && *f.IsBlocked != i.IsBlocked {
+			continue
+		}
+		within := func(value, after, before *time.Time) bool {
+			return (after == nil && before == nil) || value != nil && (after == nil || value.After(*after)) && (before == nil || value.Before(*before))
+		}
+		if !within(&i.CreatedAt, f.CreatedAfter, f.CreatedBefore) || !within(&i.UpdatedAt, f.UpdatedAfter, f.UpdatedBefore) || !within(i.ClosedAt, f.ClosedAfter, f.ClosedBefore) || !within(i.StartedAt, f.StartedAfter, f.StartedBefore) || !within(i.DeferUntil, f.DeferAfter, f.DeferBefore) || !within(i.DueAt, f.DueAfter, f.DueBefore) {
+			continue
+		}
+		if f.PriorityMin != nil && i.Priority < *f.PriorityMin || f.PriorityMax != nil && i.Priority > *f.PriorityMax || f.EmptyDescription && i.Description != "" {
+			continue
+		}
+		if f.Deferred && i.DeferUntil == nil && i.Status != types.Status("deferred") || f.Overdue && (i.DueAt == nil || !i.DueAt.Before(time.Now()) || i.Status == types.StatusClosed) {
+			continue
+		}
+		if f.MolType != nil && i.MolType != *f.MolType || f.WispType != nil && i.WispType != *f.WispType {
+			continue
+		}
+		if f.ExternalRef != nil && (i.ExternalRef == nil || *i.ExternalRef != *f.ExternalRef) || f.ExternalRefContains != "" && (i.ExternalRef == nil || !strings.Contains(strings.ToLower(*i.ExternalRef), strings.ToLower(f.ExternalRefContains))) {
 			continue
 		}
 		matches := true

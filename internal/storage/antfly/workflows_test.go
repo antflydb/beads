@@ -559,7 +559,7 @@ func TestTypedWorkCompactionPreservesEvidenceAndAssignment(t *testing.T) {
 			r.Issue.ClosedAt = &old
 		}
 		st.Issues["bd-keep"].Issue.Status = types.StatusOpen
-        st.Issues["bd-keep"].Issue.ClosedAt = nil
+		st.Issues["bd-keep"].Issue.ClosedAt = nil
 		st.Issues["bd-keep"].Issue.Assignee = "worker"
 		st.Issues["bd-keep"].Issue.Labels = []string{"keep"}
 		st.Issues["bd-comment"].Issue.Comments = []*types.Comment{{ID: "evidence", IssueID: "bd-comment", Text: "keep evidence"}}
@@ -579,5 +579,60 @@ func TestTypedWorkCompactionPreservesEvidenceAndAssignment(t *testing.T) {
 	}
 	if st.Issues["bd-keep"].Issue.Ephemeral || st.Issues["bd-keep"].Issue.Assignee != "worker" || st.Issues["bd-nohistory"] == nil || len(st.Issues["bd-comment"].Issue.Comments) != 1 {
 		t.Fatal("compaction lost evidence/assignment or removed no-history row")
+	}
+}
+
+func TestStockHousekeepingQueriesHonorTimeRangesAndNullDates(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	cutoff := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	for _, id := range []string{"bd-recent", "bd-boundary", "bd-old", "bd-open"} {
+		createTestIssue(t, s, id)
+	}
+	if err := s.mutate(ctx, func(st *state) error {
+		for id, r := range st.Issues {
+			at := cutoff
+			switch id {
+			case "bd-recent":
+				at = at.Add(time.Hour)
+			case "bd-old":
+				at = at.Add(-time.Hour)
+			}
+			r.Issue.CreatedAt = at
+			r.Issue.UpdatedAt = at
+			r.Issue.Priority = 2
+			if id != "bd-open" {
+				r.Issue.Status = types.StatusClosed
+				r.Issue.ClosedAt = &at
+				r.Issue.StartedAt = &at
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	querier, err := s.Querier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ expression, want string }{
+		{`status=closed AND closed>"2026-10-29T12:00:00Z"`, "bd-recent"},
+		{`status=closed AND closed<"2026-10-29T12:00:00Z"`, "bd-old"},
+		{`created>"2026-10-29T12:00:00Z" AND priority>1`, "bd-recent"},
+		{`updated<"2026-10-29T12:00:00Z"`, "bd-old"},
+		{`started>"2026-10-29T12:00:00Z"`, "bd-recent"},
+	} {
+		t.Run(tc.expression, func(t *testing.T) {
+			page, err := querier.Query(ctx, issueops.QueryRequest{Expression: tc.expression, IncludeClosed: true})
+			if err != nil || len(page.Items) != 1 || page.Items[0].ID != tc.want {
+				t.Fatalf("query=%s items=%+v err=%v", tc.expression, page.Items, err)
+			}
+		})
+	}
+	for _, filter := range []types.IssueFilter{{ClosedAfter: &cutoff}, {StartedAfter: &cutoff}} {
+		rows, err := s.SearchIssues(ctx, "", filter)
+		if err != nil || len(rows) != 1 || rows[0].ID != "bd-recent" {
+			t.Fatalf("time filter admitted boundary or missing dates: %+v %v", rows, err)
+		}
 	}
 }
