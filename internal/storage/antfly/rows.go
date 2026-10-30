@@ -94,21 +94,25 @@ func (r *rowTransport) readImmutable(ctx context.Context, key string) ([]byte, e
 		return nil, err
 	}
 	const budget = 8 << 20
-	if len(data) <= budget {
+	// Charge keys and a conservative per-entry overhead as well as payloads.
+	// An entry-count limit alone makes small, healthy factory snapshots thrash
+	// long before reaching the memory budget.
+	cost := len(data) + len(key) + 128
+	if cost <= budget {
 		r.cacheMu.Lock()
 		if r.immutableCache == nil {
 			r.immutableCache = map[string][]byte{}
 		}
 		if _, exists := r.immutableCache[key]; !exists {
-			for len(r.immutableOrder) > 0 && (r.immutableBytes+len(data) > budget || len(r.immutableCache) >= 2048) {
+			for len(r.immutableOrder) > 0 && r.immutableBytes+cost > budget {
 				old := r.immutableOrder[0]
 				r.immutableOrder = r.immutableOrder[1:]
-				r.immutableBytes -= len(r.immutableCache[old])
+				r.immutableBytes -= len(r.immutableCache[old]) + len(old) + 128
 				delete(r.immutableCache, old)
 			}
 			r.immutableCache[key] = bytes.Clone(data)
 			r.immutableOrder = append(r.immutableOrder, key)
-			r.immutableBytes += len(data)
+			r.immutableBytes += cost
 		}
 		r.cacheMu.Unlock()
 	}

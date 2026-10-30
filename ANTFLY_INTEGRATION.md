@@ -489,3 +489,11 @@ The transport fixture additionally proves one publication per successful batch
 and no replay of an indeterminate commit. Advanced blocking dependency types
 remain explicitly unsupported. This supplies the atomic work-graph capability
 used by legacy formula adapters; full live factory qualification is separate.
+
+
+Generic snapshot caching charges immutable payloads, keys and entry overhead to
+an 8 MiB budget. A fixed 2,048-entry cap caused a 3,000-row live snapshot to
+reread 2,086 documents after one row changed. The regression now reads only the
+fresh head, changed page and changed row, preserving hash validation and the
+fresh-head fence. This addresses one measured factory bottleneck; live factory
+latency and sustained acceptance remain separate qualification requirements.

@@ -591,3 +591,46 @@ func TestCoreIndexedIssueReadsBoundedRowsAndPreservesAggregate(t *testing.T) {
 		t.Fatalf("missing indexed issue: %v", err)
 	}
 }
+
+func TestGenericSnapshotCacheRetainsSmallRecordsAcrossLargeLiveSet(t *testing.T) {
+	ctx := context.Background()
+	tr, service := testRows()
+	tr.domainProjection = false
+	tr.cacheReads = true
+	records := map[string]any{}
+	for n := 0; n < 3000; n++ {
+		records[fmt.Sprintf("id-%d", n)] = map[string]any{"title": fmt.Sprintf("row %d", n)}
+	}
+	data, _ := json.Marshal(map[string]any{"schema": "cache-v1", "records": records})
+	if err := tr.CompareAndSwap(ctx, 0, data); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := tr.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, v, err := tr.documentTransport.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records["id-0"] = map[string]any{"title": "changed"}
+	data, _ = json.Marshal(map[string]any{"schema": "cache-v1", "records": records})
+	if err = tr.CompareAndSwap(ctx, v, data); err != nil {
+		t.Fatal(err)
+	}
+	service.mu.Lock()
+	before := service.reads
+	service.mu.Unlock()
+	actual, _, err := tr.Load(ctx)
+	if err != nil || !sameJSON(actual, data) {
+		t.Fatalf("changed snapshot: %v", err)
+	}
+	service.mu.Lock()
+	reads := service.reads - before
+	service.mu.Unlock()
+	if reads > 3 {
+		t.Fatalf("one changed row reread %d documents; want head, one page and one row", reads)
+	}
+	if tr.immutableBytes > 8<<20 {
+		t.Fatalf("cache exceeded memory budget: %d", tr.immutableBytes)
+	}
+}
