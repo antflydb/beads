@@ -271,6 +271,33 @@ func nativeError(code C.antfly_error_code) error {
 func (e *embedded) Load(ctx context.Context) ([]byte, uint64, error) {
 	return e.ReadDocument(ctx, e.key)
 }
+func (e *embedded) ReadImmutableDocument(ctx context.Context, name string) ([]byte, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if e.native == nil {
+		return nil, errors.New("Antfly store closed")
+	}
+	key, release := nativeSlice([]byte(name))
+	defer release()
+	var out C.antfly_buffer
+	err := retryEmbeddedRead(ctx, func() error { return nativeError(C.beads_lookup(e.native, key, &out)) })
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer C.beads_free_buffer(e.native, &out)
+	if out.len > maxStateBytes {
+		return nil, errors.New("Antfly document exceeds the 4 MiB per-record limit")
+	}
+	return C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len)), nil
+}
 func (e *embedded) ReadDocument(ctx context.Context, name string) ([]byte, uint64, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()

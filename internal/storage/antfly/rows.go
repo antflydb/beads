@@ -21,6 +21,13 @@ type documentTransport interface {
 	WriteDocuments(context.Context, *uint64, map[string]json.RawMessage) error
 }
 
+// Content-addressed records are verified against their address below. Their
+// engine revision is not used for publication; only the mutable head needs a
+// revision fence. Engines may avoid a separate revision lookup for these reads.
+type immutableDocumentReader interface {
+	ReadImmutableDocument(context.Context, string) ([]byte, error)
+}
+
 type rowHead struct {
 	StorageFormat int                        `json:"storage_format"`
 	Maintenance   string                     `json:"maintenance,omitempty"`
@@ -119,7 +126,13 @@ func (r *rowTransport) readImmutable(ctx context.Context, key string) ([]byte, e
 	return data, nil
 }
 func (r *rowTransport) readImmutableUncached(ctx context.Context, key string) ([]byte, error) {
-	b, _, err := r.ReadDocument(ctx, key)
+	var b []byte
+	var err error
+	if reader, ok := r.documentTransport.(immutableDocumentReader); ok {
+		b, err = reader.ReadImmutableDocument(ctx, key)
+	} else {
+		b, _, err = r.ReadDocument(ctx, key)
+	}
 	if err != nil {
 		return nil, err
 	}

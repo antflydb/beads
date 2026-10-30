@@ -685,3 +685,16 @@ including snapshot data and fence round-trips, idempotent profile reopen,
 rejected core attachment without publication, legacy index preservation and
 large generic snapshots. This is component evidence; the earlier fresh embedded
 runtime still hit deadlines and has not established a healthy factory soak.
+
+### Immutable native lookup cost
+
+Content-addressed snapshot pages and rows use a native document lookup without
+an additional revision read. Their SHA-256 address is still verified before the
+bytes are returned or cached. Mutable workspace heads continue to read their
+engine revision before their document, and every publication remains fenced by
+that revision. Remote lookups already return the body and revision together.
+
+The complete native/remote backend suite passes 182 cases with no skips or
+failures after this change. This reduces native admission calls for uncached
+immutable records from two to one; it does not establish factory liveness or
+replace the remaining concurrent embedded acceptance and recovery checks.

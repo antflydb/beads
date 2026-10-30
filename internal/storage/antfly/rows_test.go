@@ -72,6 +72,50 @@ func testRows() (*rowTransport, *documentService) {
 	service := &documentService{docs: map[string][]byte{}, versions: map[string]uint64{}, anchor: "team"}
 	return newRowTransport(service, "team").(*rowTransport), service
 }
+
+type immutableReadService struct {
+	*documentService
+	immutableReads int
+}
+
+func (s *immutableReadService) ReadImmutableDocument(ctx context.Context, key string) ([]byte, error) {
+	s.immutableReads++
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte(nil), s.docs[key]...), ctx.Err()
+}
+
+func TestImmutableLookupPreservesContentVerificationAndHeadFence(t *testing.T) {
+	ctx := context.Background()
+	_, service := testRows()
+	fast := &immutableReadService{documentService: service}
+	tr := newRowTransport(fast, "team").(*rowTransport)
+	tr.domainProjection = false
+	payload := []byte(`{"sessions":{"one":{"state":"active"}}}`)
+	if err := tr.CompareAndSwap(ctx, 0, payload); err != nil {
+		t.Fatal(err)
+	}
+	service.reads, fast.immutableReads = 0, 0
+	got, version, err := tr.Load(ctx)
+	if err != nil || !sameJSON(got, payload) || version == 0 {
+		t.Fatalf("snapshot read: version=%d err=%v data=%s", version, err, got)
+	}
+	if service.reads != 1 || fast.immutableReads == 0 {
+		t.Fatalf("want one fenced head read and immutable lookups: fenced=%d immutable=%d", service.reads, fast.immutableReads)
+	}
+	if err := tr.CompareAndSwap(ctx, version+1, payload); !errors.Is(err, errConflict) {
+		t.Fatalf("stale publication was not fenced: %v", err)
+	}
+	for key := range service.docs {
+		if strings.HasPrefix(key, "row:") {
+			service.docs[key] = []byte(`{"corrupt":true}`)
+			if _, _, err := tr.Load(ctx); err == nil {
+				t.Fatal("immutable lookup accepted a corrupt content address")
+			}
+			break
+		}
+	}
+}
 func TestRowsExceedAggregateLimitAndFencePublication(t *testing.T) {
 	ctx := context.Background()
 	tr, service := testRows()
