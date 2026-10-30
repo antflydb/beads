@@ -523,7 +523,7 @@ var proxyPermittedPaths = []string{
 	"upgrade ack", "upgrade review", "upgrade status",
 
 	// workspace lifecycle and configuration
-	"antfly init", "antfly memory", "antfly context", "antfly provider",
+	"antfly gc", "antfly init", "antfly memory", "antfly context", "antfly provider",
 	"antfly branch create", "antfly branch list", "antfly branch merge",
 	"antfly knowledge configure", "antfly knowledge status", "antfly knowledge sync", "antfly knowledge watch",
 	"antfly knowledge mapping", "antfly knowledge query", "antfly knowledge resolve", "antfly knowledge render", "antfly knowledge reviews", "antfly knowledge review", "antfly knowledge curation", "antfly knowledge merge", "antfly knowledge suppress",

@@ -392,9 +392,21 @@ collection. Collection fences the workspace head; every physical delete and
 fence release checks that ownership version. A crash leaves a marker that a
 subsequent collection can adopt. Current-head records are retained, unrelated
 namespaces are untouched, and old readers can fail rather than receive partial
-state. Embedded and remote round trips pass. Core workspaces are deliberately
-refused because forks can share immutable rows; they need a catalog-wide
-collection barrier before those records can be safely reclaimed.
+state. Embedded and remote round trips pass. The generic collector refuses
+core workspaces because forks share immutable records. Core history has its own
+`bd antfly gc` / `CollectWorkspaceGarbage` operator door. It validates the
+workspace project identity, fences main's catalog, fences every registered fork,
+and marks their current heads plus recursively referenced merge bases before
+scanning those workspaces' immutable namespaces. Every delete checks the main
+owner version; a replaced collector cannot delete or release its successor's
+fence. Forks are released before main. Pending fork creation must finish first.
+All participating clients must honor maintenance markers (the pinned SDK does).
+Older in-flight readers may need to retry after collection. Interrupted fences
+are resumable through the same operator door, while ordinary opens refuse them.
+Embedded and remote tests verify unchanged live snapshots and successful
+three-way merges after collection; fault injection covers writers, owner loss,
+foreign identity, and pending-fork refusal. Domain audit/outbox retention remains
+separate: physically collecting history does not discard live evidence.
 
 Persistent legacy poured molecules are now admitted to the work lifecycle.
 Their open-child close guard remains active. This does not admit templates or

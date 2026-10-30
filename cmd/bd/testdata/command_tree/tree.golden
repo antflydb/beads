@@ -301,6 +301,12 @@ bd antfly context
   flag --limit type=int default="10" usage="Maximum matches from each source"
   flag --max-tokens type=int default="4096" usage="Maximum context budget"
 
+bd antfly gc
+  use: "gc"
+  short: "Collect unreachable core history while fencing main and all forks"
+  hidden: false
+  runnable: true
+
 bd antfly init
   use: "init"
   short: "Create or attach an Antfly workspace"

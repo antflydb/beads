@@ -6,6 +6,7 @@ go_library(
         "antfly.h",
         "branches.go",
         "context.go",
+        "core_gc.go",
         "core_index.go",
         "delete.go",
         "embedded_cgo.go",
@@ -71,6 +72,7 @@ go_library(
 go_test(
     name = "antfly_test",
     srcs = [
+        "core_gc_test.go",
         "credentials_test.go",
         "querier_test.go",
         "sweep_test.go",

@@ -133,3 +133,9 @@ type DatabaseBackupWriter interface {
 func RestoreDatabaseBackupFile(ctx context.Context, library, destination, archive string) error {
 	return impl.RestoreDatabaseBackupFile(ctx, library, destination, archive)
 }
+
+// CollectWorkspaceGarbage reclaims core history behind a catalog-wide
+// maintenance barrier, preserving all registered fork heads and merge bases.
+func CollectWorkspaceGarbage(ctx context.Context, dir string, opts backend.OpenOptions) (SnapshotGCResult, error) {
+	return impl.CollectWorkspaceGarbage(ctx, dir, opts)
+}

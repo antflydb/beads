@@ -63,6 +63,9 @@ func (r *rowTransport) collectGarbage(ctx context.Context, validate func(map[str
 	if head.StorageFormat != 2 || head.Fields == nil || head.Pages == nil {
 		return result, fmt.Errorf("snapshot must use row format 2 before collection")
 	}
+	if head.Fields[coreIndexField] != nil || head.Fields["format"] != nil && head.Fields["revision"] != nil {
+		return result, errUnsupported("core history requires catalog-wide collection")
+	}
 	if validate != nil {
 		if err = validate(head.Fields); err != nil {
 			return result, err

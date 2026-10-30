@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/backend"
 	bantfly "github.com/steveyegge/beads/backend/antfly"
 )
 
@@ -82,6 +83,16 @@ func init() {
 	}}
 	memory.Flags().StringVar(&space, "space", "", "Memory space (default derived from workspace routing)")
 	memory.Flags().StringVar(&key, "idempotency-key", "", "Stable operation key, required for mutations")
+
+	collect := &cobra.Command{Use: "gc", Short: "Collect unreachable core history while fencing main and all forks", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		CheckReadonly("antfly gc")
+		result, err := bantfly.CollectWorkspaceGarbage(cmd.Context(), resolveInitBeadsDir(), backend.OpenOptions{})
+		if err != nil {
+			return err
+		}
+		return antflyJSON(cmd, result)
+	}}
+	group.AddCommand(collect)
 	group.AddCommand(initialize, memory)
 	addAntflyWorkflows(group)
 	rootCmd.AddCommand(group)
