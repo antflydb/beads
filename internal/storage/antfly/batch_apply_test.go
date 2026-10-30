@@ -15,7 +15,7 @@ import (
 )
 
 func batchCreate(key string) issueops.ApplyItem {
-	return issueops.ApplyItem{Kind: issueops.ItemCreate, Create: &issueops.CreateItem{Key: key, Issue: &types.Issue{Title: key, IssueType: types.TypeTask}}}
+	return issueops.ApplyItem{Kind: issueops.ItemCreate, Create: &issueops.CreateItem{Key: key, Issue: &types.Issue{Title: key, IssueType: types.IssueType("step")}}}
 }
 func batchEdge(from, to string, kind types.DependencyType) issueops.ApplyItem {
 	return issueops.ApplyItem{Kind: issueops.ItemDepAdd, DepAdd: &issueops.DepAddItem{Source: issueops.Ref{Key: from}, Target: issueops.Ref{Key: to}, Type: kind}}

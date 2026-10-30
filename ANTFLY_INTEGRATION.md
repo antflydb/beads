@@ -497,3 +497,9 @@ reread 2,086 documents after one row changed. The regression now reads only the
 fresh head, changed page and changed row, preserving hash validation and the
 fresh-head fence. This addresses one measured factory bottleneck; live factory
 latency and sustained acceptance remain separate qualification requirements.
+
+
+Legacy formula compilation emits `step` work records. Antfly accepts and
+advertises that fixed factory type alongside convoys and merge requests, so
+native batch creation and ordinary CLI type validation agree. Native and remote
+batch contract tests now use `step` rather than substituting `task`.

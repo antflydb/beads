@@ -376,7 +376,7 @@ func (s *Store) GetCustomStatuses(context.Context) ([]string, error) { return ni
 func (s *Store) GetCustomStatusesDetailed(context.Context) ([]types.CustomStatus, error) {
 	return nil, nil
 }
-func (s *Store) GetCustomTypes(context.Context) ([]string, error) { return nil, nil }
+func (s *Store) GetCustomTypes(context.Context) ([]string, error) { return factoryWorkTypes(), nil }
 func (s *Store) GetInfraTypes(context.Context) map[string]bool    { return map[string]bool{} }
 func (s *Store) IsInfraTypeCtx(_ context.Context, t types.IssueType) bool {
 	return domain.IsInfraType(t)

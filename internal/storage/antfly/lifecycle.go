@@ -18,10 +18,10 @@ import (
 	"github.com/steveyegge/beads/issueops"
 )
 
-// Gas City keeps convoys and merge requests in the durable work ledger.
+// Gas City keeps convoys, merge requests and legacy steps in the work ledger.
 // These fixed work types share the ordinary lifecycle; runtime infrastructure
 // still belongs to the dedicated coordination workspace.
-func factoryWorkTypes() []string { return []string{"convoy", "merge-request"} }
+func factoryWorkTypes() []string { return []string{"convoy", "merge-request", "step"} }
 
 type lifecycle struct{ s *Store }
 
