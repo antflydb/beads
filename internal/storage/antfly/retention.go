@@ -321,7 +321,7 @@ func domainInfraOrQueue(i *types.Issue) bool {
 		return true
 	}
 	for _, label := range i.Labels {
-		if strings.HasPrefix(label, "gc:extmsg-") || slices.Contains([]string{"gc:nudge", "gc:nudge-queue", "gc:session"}, label) {
+		if strings.HasPrefix(label, "gc:extmsg-") || slices.Contains([]string{"gc:nudge", "gc:nudge-queue", "gc:session", "gt:slot"}, label) {
 			return true
 		}
 	}

@@ -5,7 +5,6 @@ package antfly
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/issueops"
@@ -342,36 +341,6 @@ func (unsupportedDoltStorage) Merge(_ context.Context, _ string) (_ []storage.Co
 	return
 }
 
-func (unsupportedDoltStorage) MergeMetadata(_ context.Context, _ string, _ string, _ json.RawMessage, _ string) (err error) {
-	err = errUnsupported("MergeMetadata")
-	return
-}
-
-func (unsupportedDoltStorage) MergeSlotAcquire(_ context.Context, _ string, _ string, _ bool) (_ *storage.MergeSlotResult, err error) {
-	err = errUnsupported("MergeSlotAcquire")
-	return
-}
-
-func (unsupportedDoltStorage) MergeSlotCheck(_ context.Context) (_ *storage.MergeSlotStatus, err error) {
-	err = errUnsupported("MergeSlotCheck")
-	return
-}
-
-func (unsupportedDoltStorage) MergeSlotCreate(_ context.Context, _ string) (_ *types.Issue, err error) {
-	err = errUnsupported("MergeSlotCreate")
-	return
-}
-
-func (unsupportedDoltStorage) MergeSlotRelease(_ context.Context, _ string, _ string) (err error) {
-	err = errUnsupported("MergeSlotRelease")
-	return
-}
-
-func (unsupportedDoltStorage) MetadataCAS() (_ issueops.MetadataCAS, err error) {
-	err = errUnsupported("MetadataCAS")
-	return
-}
-
 func (unsupportedDoltStorage) MoleculeStepper() (_ issueops.MoleculeStepper, err error) {
 	err = errUnsupported("MoleculeStepper")
 	return
@@ -472,21 +441,6 @@ func (unsupportedDoltStorage) SetRepoMtime(_ context.Context, _ string, _ string
 	return
 }
 
-func (unsupportedDoltStorage) SlotClear(_ context.Context, _ string, _ string, _ string) (err error) {
-	err = errUnsupported("SlotClear")
-	return
-}
-
-func (unsupportedDoltStorage) SlotGet(_ context.Context, _ string, _ string) (_ string, err error) {
-	err = errUnsupported("SlotGet")
-	return
-}
-
-func (unsupportedDoltStorage) SlotSet(_ context.Context, _ string, _ string, _ string, _ string) (err error) {
-	err = errUnsupported("SlotSet")
-	return
-}
-
 func (unsupportedDoltStorage) SnapshotIssue(_ context.Context, _ string, _ int) (err error) {
 	err = errUnsupported("SnapshotIssue")
 	return
@@ -532,4 +486,4 @@ func (unsupportedDoltStorage) UpdateIssueType(_ context.Context, _ string, _ str
 	return
 }
 
-// NOTE: partial shell (103 of 205 methods generated; 102 left to this package's hand-written set).
+// NOTE: partial shell (94 of 205 methods generated; 111 left to this package's hand-written set).

@@ -94,7 +94,7 @@ are not granted durable leases and do not emit versioned issue snapshots into
 the knowledge outbox. Runtime wisps stay in main when a branch is created.
 
 Unsupported methods and unsupported query fields return typed
-`ErrUnsupported` errors. Beads-specific proto/gate/molecule lifecycle, custom
+`ErrUnsupported` errors. Broader Beads proto/molecule command compatibility, advanced blocking edges, custom
 claim pools and status/type vocabularies, federation, Dolt SQL/history/remotes,
 and the entire upstream storage interface are not claimed as compatible.
 Gas City continues to own its orchestration policy through its provider API.
@@ -513,3 +513,26 @@ or unknown commit result is replayed. Protocol tests verify the refusal shape,
 recovery, cancellation and absence of write retries; the full native and remote
 backend regression suite passes. Live concurrent factory qualification remains
 in progress.
+
+
+## Metadata coordination and merge slots
+
+The native backend serves `MetadataCAS`, atomic single-key metadata merges and
+per-issue slots. CAS uses the shared request planner and canonical JSON equality,
+distinguishes absent keys from JSON null, reports the deciding stored value,
+preserves sibling keys, and publishes nothing for a refused or unchanged swap.
+Independent embedded and remote handles qualify first-writer-wins and concurrent
+sibling-key writes.
+
+The legacy merge-slot create/check/acquire/release commands use staged guarded
+lifecycle operations and one conditional publication. A competing acquire can
+queue one deduplicated waiter; wrong-holder release is refused. Retry is limited
+to proved rejected publications of these internal operations, never unknown
+commit outcomes or public callbacks. The legacy holder interface supplies no
+lease expiry or automatic ownership transfer.
+
+Merge slots are runtime coordination: they remain in main, are excluded from
+fork payloads and branch merges, and survive typed housekeeping. Branch creation
+or conversion of work into runtime slot/wisp records is refused. Native and
+remote tests cover racing holders, waiters, independent-handle recovery, merge
+preservation and retention protection, alongside the full backend suite.

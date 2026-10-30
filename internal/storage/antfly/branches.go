@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	storageops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 )
 
@@ -176,7 +175,7 @@ func (s *Store) Fork(ctx context.Context, name, actor string) (Branch, error) {
 		seed.Knowledge = nil
 		seed.KnowledgePreparing = nil
 		for id, record := range seed.Issues {
-			if storageops.IsWisp(&record.Issue) {
+			if runtimeOwnedIssue(&record.Issue) {
 				delete(seed.Issues, id)
 				continue
 			}
@@ -467,7 +466,7 @@ func mergeStates(base, main, fork *state, actor string) (*state, []string, error
 	}
 	for id := range ids {
 		br, mr, fr := base.Issues[id], main.Issues[id], fork.Issues[id]
-		if (br != nil && storageops.IsWisp(&br.Issue)) || (mr != nil && storageops.IsWisp(&mr.Issue)) {
+		if (br != nil && runtimeOwnedIssue(&br.Issue)) || (mr != nil && runtimeOwnedIssue(&mr.Issue)) || (fr != nil && runtimeOwnedIssue(&fr.Issue)) {
 			continue
 		}
 		encode := func(record *record) json.RawMessage {
@@ -568,7 +567,7 @@ func mergeStates(base, main, fork *state, actor string) (*state, []string, error
 		out := map[string]*types.Dependency{}
 		for key, edge := range st.Edges {
 			a, b := st.Issues[edge.IssueID], st.Issues[edge.DependsOnID]
-			if (a != nil && storageops.IsWisp(&a.Issue)) || (b != nil && storageops.IsWisp(&b.Issue)) {
+			if (a != nil && runtimeOwnedIssue(&a.Issue)) || (b != nil && runtimeOwnedIssue(&b.Issue)) {
 				continue
 			}
 			out[key] = edge
@@ -580,7 +579,7 @@ func mergeStates(base, main, fork *state, actor string) (*state, []string, error
 	}
 	for key, edge := range main.Edges {
 		a, b := main.Issues[edge.IssueID], main.Issues[edge.DependsOnID]
-		if (a != nil && storageops.IsWisp(&a.Issue)) || (b != nil && storageops.IsWisp(&b.Issue)) {
+		if (a != nil && runtimeOwnedIssue(&a.Issue)) || (b != nil && runtimeOwnedIssue(&b.Issue)) {
 			out.Edges[key] = edge
 		}
 	}

@@ -33,8 +33,8 @@ func (l *lifecycle) Create(ctx context.Context, req issueops.CreateRequest) (out
 			return e
 		}
 		i := attempt.Issue
-		if st.Config["antfly.branch.parent"] != "" && storageops.IsWisp(i) {
-			return errUnsupported("Create: runtime wisps belong in main")
+		if st.Config["antfly.branch.parent"] != "" && runtimeOwnedIssue(i) {
+			return errUnsupported("Create: runtime coordination belongs in main")
 		}
 		if st.Config["antfly.branch.parent"] != "" && (i.Assignee != "" || i.Status == types.StatusInProgress) {
 			return errUnsupported("Create: live claims belong in main")
@@ -206,6 +206,9 @@ func (l *lifecycle) Update(ctx context.Context, req issueops.UpdateRequest) (out
 				return fmt.Errorf("%w: %w", storage.ErrValidation, e)
 			}
 			i.Ephemeral, i.NoHistory, i.StorageClass = ephemeral, noHistory, class
+		}
+		if st.Config["antfly.branch.parent"] != "" && runtimeOwnedIssue(i) {
+			return errUnsupported("Update: runtime coordination belongs in main")
 		}
 		after := st.hydrate(i.ID)
 		out.Changed = !reflect.DeepEqual(before, after)

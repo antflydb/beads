@@ -21,6 +21,8 @@ go_library(
         "legacy.go",
         "lifecycle.go",
         "local.go",
+        "metadata.go",
+        "merge_slot.go",
         "native.go",
         "notes.go",
         "projection.go",
@@ -74,6 +76,7 @@ go_test(
     name = "antfly_test",
     srcs = [
         "batch_apply_test.go",
+        "coordination_test.go",
         "core_gc_test.go",
         "credentials_test.go",
         "querier_test.go",
