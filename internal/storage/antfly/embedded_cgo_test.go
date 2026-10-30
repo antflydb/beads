@@ -399,4 +399,21 @@ func TestNativeIndexedSnapshotBackup(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("restore differs: %s", raw)
 	}
+	for n := 0; n < 3; n++ {
+		_, v, e := src.Load(ctx)
+		if e != nil {
+			t.Fatal(e)
+		}
+		next, _ := json.Marshal(map[string]any{"schema": "native-v1", "records": map[string]any{"one": n}})
+		if e = src.CompareAndSwap(ctx, v, next); e != nil {
+			t.Fatal(e)
+		}
+	}
+	gc, e := src.(*rowTransport).CollectGarbage(ctx)
+	if e != nil || gc.Deleted == 0 {
+		t.Fatalf("native collection: %+v %v", gc, e)
+	}
+	if _, _, e = src.Load(ctx); e != nil {
+		t.Fatal(e)
+	}
 }

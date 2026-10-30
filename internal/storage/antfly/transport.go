@@ -218,7 +218,16 @@ func (r *remote) CompareAndSwap(ctx context.Context, version uint64, data []byte
 }
 
 func (r *remote) WriteDocuments(ctx context.Context, version *uint64, docs map[string]json.RawMessage) error {
-	body := map[string]any{"read_set": []any{}, "tables": map[string]any{r.target.Table: map[string]any{"inserts": docs, "sync_level": "write"}}}
+	inserts := map[string]json.RawMessage{}
+	deletes := []string{}
+	for key, value := range docs {
+		if value == nil {
+			deletes = append(deletes, key)
+		} else {
+			inserts[key] = value
+		}
+	}
+	body := map[string]any{"read_set": []any{}, "tables": map[string]any{r.target.Table: map[string]any{"inserts": inserts, "deletes": deletes, "sync_level": "write"}}}
 	if version != nil {
 		body["read_set"] = []any{map[string]any{"table": r.target.Table, "key": r.target.Workspace, "version": strconv.FormatUint(*version, 10)}}
 	}

@@ -23,6 +23,7 @@ type documentTransport interface {
 
 type rowHead struct {
 	StorageFormat int                        `json:"storage_format"`
+	Maintenance   string                     `json:"maintenance,omitempty"`
 	Fields        map[string]json.RawMessage `json:"fields"`
 	Pages         map[string]string          `json:"pages"`
 }
@@ -62,6 +63,9 @@ func readRowHead(b []byte) (*rowHead, error) {
 	var head rowHead
 	if err := json.Unmarshal(b, &head); err != nil {
 		return nil, err
+	}
+	if head.Maintenance != "" {
+		return nil, ErrSnapshotMaintenance
 	}
 	if head.StorageFormat == 0 {
 		return nil, nil

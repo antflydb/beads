@@ -29,6 +29,7 @@ typedef struct {
     antfly_error_code (*memory)(antfly_db*,antfly_slice,antfly_slice,antfly_buffer*);
     antfly_error_code (*enrichment)(antfly_db*,antfly_slice);
  antfly_error_code (*search)(antfly_db*,antfly_slice,antfly_buffer*);
+ antfly_error_code (*scan)(antfly_db*,antfly_slice,antfly_buffer*);
  antfly_error_code (*resolve)(antfly_db*,antfly_slice,antfly_slice,antfly_buffer*);
  antfly_error_code (*render)(antfly_db*,antfly_slice,antfly_slice,antfly_buffer*);
  antfly_error_code (*reviews)(antfly_db*,antfly_slice,antfly_buffer*);
@@ -59,6 +60,7 @@ static int beads_load(beads_antfly *a,const char *path) {
     LOAD(memory,"antfly_db_memory_json");
     LOAD(enrichment,"antfly_db_add_enrichment_json");
  LOAD(search,"antfly_db_search_json");
+ LOAD(scan,"antfly_db_scan_json");
  LOAD(resolve,"antfly_db_resolve_query_json");
  LOAD(render,"antfly_db_render_resolver_key_json");
  LOAD(reviews,"antfly_db_resolver_reviews_json");
@@ -91,7 +93,7 @@ static antfly_error_code beads_put(beads_antfly*a,const antfly_write_intent*writ
 static antfly_error_code beads_add_graph(beads_antfly*a){const char*cfg="{\"name\":\"beads\",\"type\":\"graph\"}";antfly_slice config={(const uint8_t*)cfg,strlen(cfg)};return a->add_index(a->table,config);}
 static antfly_error_code beads_memory(beads_antfly*a,antfly_slice space,antfly_slice body,antfly_buffer*out){return a->memory(a->root,space,body,out);}
 static antfly_error_code beads_native(beads_antfly*a,int op,antfly_slice name,antfly_slice body,antfly_buffer*out){
- switch(op){case 0:return a->add_index(a->table,body);case 1:return a->enrichment(a->table,body);case 2:return a->search(a->table,body,out);case 3:return a->resolve(a->table,name,body,out);case 4:return a->render(a->table,name,body,out);case 5:return a->reviews(a->table,body,out);case 6:return a->curation(a->table,name,out);case 7:return a->merge(a->table,name,body);case 8:return a->suppress(a->table,name,body,out);default:return ANTFLY_INVALID_ARGUMENT;}
+ switch(op){case 0:return a->add_index(a->table,body);case 1:return a->enrichment(a->table,body);case 2:return a->search(a->table,body,out);case 3:return a->resolve(a->table,name,body,out);case 4:return a->render(a->table,name,body,out);case 5:return a->reviews(a->table,body,out);case 6:return a->curation(a->table,name,out);case 7:return a->merge(a->table,name,body);case 8:return a->suppress(a->table,name,body,out);case 9:return a->scan(a->table,body,out);default:return ANTFLY_INVALID_ARGUMENT;}
 }
 static void beads_free_buffer(beads_antfly*a,antfly_buffer*out){a->free_buffer(out);}
 static void beads_close(beads_antfly*a){if(a->table)a->close(a->table);if(a->root)a->close(a->root);if(a->library)dlclose(a->library);free(a);}
@@ -100,6 +102,7 @@ import "C"
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -280,7 +283,7 @@ func (e *embedded) writeDocuments(ctx context.Context, fence string, version *ui
 		defer kfree()
 		v, vfree := nativeSlice(document)
 		defer vfree()
-		writes[index] = C.antfly_write_intent{key: k, value: v}
+		writes[index] = C.antfly_write_intent{key: k, value: v, is_delete: C.bool(document == nil)}
 		index++
 	}
 	var code C.antfly_error_code
@@ -335,7 +338,7 @@ func (e *embedded) Close() error {
 }
 
 func (e *embedded) Native(ctx context.Context, op, name string, body json.RawMessage) (json.RawMessage, error) {
-	ops := map[string]int{"index": 0, "enrichment": 1, "query": 2, "resolve": 3, "render": 4, "reviews": 5, "review": 5, "curation": 6, "merge": 7, "suppress": 8}
+	ops := map[string]int{"index": 0, "enrichment": 1, "query": 2, "resolve": 3, "render": 4, "reviews": 5, "review": 5, "curation": 6, "merge": 7, "suppress": 8, "scan": 9}
 	code, ok := ops[op]
 	if !ok {
 		return nil, errUnsupported("native." + op)
@@ -404,4 +407,29 @@ func (e *embedded) Native(ctx context.Context, op, name string, body json.RawMes
 
 func (e *embedded) writeSource(ctx context.Context, key string, version uint64, body []byte) error {
 	return e.writeDocuments(ctx, key, &version, map[string]json.RawMessage{key: body})
+}
+
+func (e *embedded) ScanDocuments(ctx context.Context, from, to string, limit int) ([]string, error) {
+	request, _ := json.Marshal(map[string]any{"from_key_b64": base64.StdEncoding.EncodeToString([]byte(from)), "to_key_b64": base64.StdEncoding.EncodeToString([]byte(to)), "exclusive_to": true, "limit": limit})
+	raw, err := e.Native(ctx, "scan", "", request)
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Hashes []struct {
+			ID string `json:"id_b64"`
+		} `json:"hashes"`
+	}
+	if err = json.Unmarshal(raw, &response); err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(response.Hashes))
+	for _, hash := range response.Hashes {
+		key, e := base64.StdEncoding.DecodeString(hash.ID)
+		if e != nil {
+			return nil, e
+		}
+		keys = append(keys, string(key))
+	}
+	return keys, nil
 }

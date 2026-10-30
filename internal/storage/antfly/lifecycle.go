@@ -39,7 +39,7 @@ func (l *lifecycle) Create(ctx context.Context, req issueops.CreateRequest) (out
 		if st.Config["antfly.branch.parent"] != "" && (i.Assignee != "" || i.Status == types.StatusInProgress) {
 			return errUnsupported("Create: live claims belong in main")
 		}
-		if domain.IsInfraType(i.IssueType) || i.IssueType == types.TypeMolecule || i.IsTemplate || i.WispType != "" || (i.AwaitType != "" && i.IssueType != types.TypeGate) || i.MolType != "" || attempt.WaitsFor != nil {
+		if domain.IsInfraType(i.IssueType) || i.IsTemplate || i.WispType != "" || (i.AwaitType != "" && i.IssueType != types.TypeGate) || (i.MolType != "" && i.IssueType != types.TypeMolecule) || attempt.WaitsFor != nil {
 			return errUnsupported("Lifecycle.Create: ephemeral, template, molecule, or waits-for")
 		}
 		if i.ID == "" {
@@ -160,8 +160,8 @@ func (l *lifecycle) Update(ctx context.Context, req issueops.UpdateRequest) (out
 			i.CloseReason = ""
 			i.ClosedBySession = ""
 		}
-		if domain.IsInfraType(i.IssueType) || i.IssueType == types.TypeMolecule {
-			return errUnsupported("Lifecycle.Update: infrastructure or molecule type")
+		if domain.IsInfraType(i.IssueType) {
+			return errUnsupported("Lifecycle.Update: infrastructure type")
 		}
 		if e = i.ValidateWithCustom(nil, factoryWorkTypes()); e != nil {
 			return fmt.Errorf("%w: %v", storage.ErrValidation, e)

@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/steveyegge/beads/internal/storage/backends"
 	"github.com/steveyegge/beads/issueops"
+	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type documentService struct {
@@ -44,6 +48,11 @@ func (s *documentService) WriteDocuments(_ context.Context, v *uint64, docs map[
 	}
 	s.clock++
 	for key, data := range docs {
+		if data == nil {
+			delete(s.docs, key)
+			delete(s.versions, key)
+			continue
+		}
 		s.docs[key] = append([]byte(nil), data...)
 		s.versions[key] = s.clock
 	}
@@ -327,5 +336,171 @@ func TestSnapshotBackupRestoreChecksIntegrityAndConcurrentWrites(t *testing.T) {
 	}
 	if before != string(dest.data) {
 		t.Fatal("invalid archive wrote data")
+	}
+}
+
+func (s *documentService) ScanDocuments(_ context.Context, from, to string, limit int) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys := []string{}
+	for key := range s.docs {
+		if key > from && key < to {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+	return keys, nil
+}
+func TestGenericSnapshotGarbageCollectionRetainsLiveRows(t *testing.T) {
+	ctx := context.Background()
+	svc := &documentService{docs: map[string][]byte{}, versions: map[string]uint64{}, anchor: "infra"}
+	tr := &rowTransport{documentTransport: svc, workspace: "infra"}
+	for n := 0; n < 5; n++ {
+		_, v, e := tr.Load(ctx)
+		if e != nil {
+			t.Fatal(e)
+		}
+		raw, _ := json.Marshal(map[string]any{"schema": "test", "records": map[string]any{"a": n}})
+		if e = tr.CompareAndSwap(ctx, v, raw); e != nil {
+			t.Fatal(e)
+		}
+	}
+	before, _, e := tr.Load(ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	svc.docs["unrelated"] = []byte(`{"keep":true}`)
+	result, e := tr.CollectGarbage(ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if result.Deleted == 0 {
+		t.Fatal("unreachable history was not collected")
+	}
+	after, _, e := tr.Load(ctx)
+	if e != nil || string(before) != string(after) {
+		t.Fatalf("live snapshot changed: %s %v", after, e)
+	}
+	if _, ok := svc.docs["unrelated"]; !ok {
+		t.Fatal("deleted another workspace")
+	}
+	// A crashed collector's durable head marker is explicitly resumable.
+	var head rowHead
+	if e = json.Unmarshal(svc.docs[svc.anchor], &head); e != nil {
+		t.Fatal(e)
+	}
+	head.Maintenance = "crashed"
+	svc.docs[svc.anchor], _ = json.Marshal(head)
+	if _, _, e = tr.Load(ctx); !errors.Is(e, ErrSnapshotMaintenance) {
+		t.Fatalf("maintenance read did not fail closed: %v", e)
+	}
+	if _, e = tr.CollectGarbage(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = tr.Load(ctx); e != nil {
+		t.Fatal(e)
+	}
+}
+
+type stealingCollector struct {
+	*documentService
+	once sync.Once
+}
+
+func (s *stealingCollector) ScanDocuments(ctx context.Context, from, to string, limit int) ([]string, error) {
+	keys, e := s.documentService.ScanDocuments(ctx, from, to, limit)
+	s.once.Do(func() {
+		raw, v, _ := s.documentService.Load(ctx)
+		var head rowHead
+		_ = json.Unmarshal(raw, &head)
+		head.Maintenance = "another-owner"
+		raw, _ = json.Marshal(head)
+		_ = s.documentService.WriteDocuments(ctx, &v, map[string]json.RawMessage{s.anchor: raw})
+	})
+	return keys, e
+}
+func TestGenericSnapshotCollectorCannotDeleteAfterLosingFence(t *testing.T) {
+	ctx := context.Background()
+	svc := &documentService{docs: map[string][]byte{}, versions: map[string]uint64{}, anchor: "infra"}
+	wrapped := &stealingCollector{documentService: svc}
+	tr := &rowTransport{documentTransport: wrapped, workspace: "infra"}
+	for n := 0; n < 2; n++ {
+		_, v, _ := tr.Load(ctx)
+		data, _ := json.Marshal(map[string]any{"records": map[string]any{"a": n}})
+		if e := tr.CompareAndSwap(ctx, v, data); e != nil {
+			t.Fatal(e)
+		}
+	}
+	count := len(svc.docs)
+	if _, e := tr.CollectGarbage(ctx); !errors.Is(e, ErrSnapshotConflict) {
+		t.Fatalf("lost maintenance fence: %v", e)
+	}
+	if len(svc.docs) != count {
+		t.Fatal("old collector deleted after losing ownership")
+	}
+	var head rowHead
+	if e := json.Unmarshal(svc.docs[svc.anchor], &head); e != nil {
+		t.Fatal(e)
+	}
+	if head.Maintenance != "another-owner" {
+		t.Fatal("old collector cleared another owner's fence")
+	}
+	core := newRowTransport(svc, "infra").(*rowTransport)
+	if _, e := core.CollectGarbage(ctx); e == nil {
+		t.Fatal("branching work GC was admitted")
+	}
+}
+
+func TestRemoteSnapshotIndexedArchiveAndCollection(t *testing.T) {
+	endpoint := os.Getenv("ANTFLY_TEST_URL")
+	if endpoint == "" {
+		t.Skip("ANTFLY_TEST_URL required for disposable remote server")
+	}
+	ctx := context.Background()
+	target := Target{URL: endpoint, Table: fmt.Sprintf("snapshot_qualification_%d", time.Now().UnixNano()), Workspace: "infra", Database: "default", Namespace: "public"}
+	tr, e := OpenSnapshot(ctx, target, backends.OpenOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer tr.Close()
+	for n := 0; n < 3; n++ {
+		_, v, e := tr.Load(ctx)
+		if e != nil {
+			t.Fatal(e)
+		}
+		raw, _ := json.Marshal(map[string]any{"schema": "remote-v1", "records": map[string]any{"one": n}})
+		if e = tr.CompareAndSwap(ctx, v, raw); e != nil {
+			t.Fatal(e)
+		}
+	}
+	selected, e := tr.(*rowTransport).ReadSnapshotRecords(ctx, "records", []string{"one"}, nil)
+	if e != nil || len(selected.Records) != 1 {
+		t.Fatalf("remote index: %+v %v", selected, e)
+	}
+	archive, e := BackupSnapshot(ctx, tr)
+	if e != nil {
+		t.Fatal(e)
+	}
+	target.Workspace = "restored"
+	restored, e := OpenSnapshot(ctx, target, backends.OpenOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer restored.Close()
+	if e = RestoreSnapshotBackup(ctx, restored, archive, 0); e != nil {
+		t.Fatal(e)
+	}
+	result, e := tr.(*rowTransport).CollectGarbage(ctx)
+	if e != nil || result.Deleted == 0 {
+		t.Fatalf("remote collection: %+v %v", result, e)
+	}
+	if _, _, e = tr.Load(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = restored.Load(ctx); e != nil {
+		t.Fatal(e)
 	}
 }

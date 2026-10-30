@@ -386,3 +386,16 @@ also expose hash-bucket point/batch lookup with expected-head checks, and a
 checksummed portable logical workspace archive with conditional restore.
 An archive covers its workspace; native memory held outside it requires a
 separate engine backup. These additions do not certify stock factory operation.
+
+Dedicated generic workspaces additionally support explicit, resumable garbage
+collection. Collection fences the workspace head; every physical delete and
+fence release checks that ownership version. A crash leaves a marker that a
+subsequent collection can adopt. Current-head records are retained, unrelated
+namespaces are untouched, and old readers can fail rather than receive partial
+state. Embedded and remote round trips pass. Core workspaces are deliberately
+refused because forks can share immutable rows; they need a catalog-wide
+collection barrier before those records can be safely reclaimed.
+
+Persistent legacy poured molecules are now admitted to the work lifecycle.
+Their open-child close guard remains active. This does not admit templates or
+infrastructure records into the work ledger.

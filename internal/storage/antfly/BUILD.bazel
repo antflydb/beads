@@ -25,6 +25,7 @@ go_library(
         "reader.go",
         "rows.go",
         "snapshot.go",
+        "snapshot_gc.go",
         "store.go",
         "transaction.go",
         "transaction_unsupported_gen.go",

@@ -106,3 +106,16 @@ func DecodeSnapshotBackup(encoded []byte) ([]byte, error) { return impl.DecodeSn
 func RestoreSnapshotBackup(ctx context.Context, tr SnapshotTransport, encoded []byte, expected uint64) error {
 	return impl.RestoreSnapshotBackup(ctx, tr, encoded, expected)
 }
+
+// ErrSnapshotMaintenance identifies a durable, explicitly resumable collection fence.
+var ErrSnapshotMaintenance = impl.ErrSnapshotMaintenance
+
+// SnapshotGCResult counts immutable documents visited and physically removed.
+type SnapshotGCResult = impl.SnapshotGCResult
+
+// SnapshotMaintenance collects unreachable records in dedicated generic
+// workspaces. Branching core workspaces require a separate collection protocol.
+type SnapshotMaintenance interface {
+	SnapshotTransport
+	CollectGarbage(context.Context) (SnapshotGCResult, error)
+}

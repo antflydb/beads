@@ -288,3 +288,25 @@ func TestAntflyWorkGateLifecycleAndWaiterFencing(t *testing.T) {
 		t.Fatal("resolved gate kept work blocked")
 	}
 }
+
+func TestAntflyLegacyPouredMoleculeProvider(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	raw, e := s.ExecuteFactory(ctx, "create", nil, json.RawMessage(`{"type":"molecule","title":"legacy work","metadata":{"gc.formula_name":"test"}}`), "test")
+	if e != nil {
+		t.Fatal(e)
+	}
+	var root struct {
+		ID string `json:"id"`
+	}
+	if e = json.Unmarshal(raw, &root); e != nil {
+		t.Fatal(e)
+	}
+	child, _ := json.Marshal(map[string]any{"title": "first", "parent_id": root.ID})
+	if _, e = s.ExecuteFactory(ctx, "create", nil, child, "test"); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.CloseIssue(ctx, root.ID, "done", "test", ""); !errors.Is(e, storage.ErrCloseOpenChildren) {
+		t.Fatalf("legacy root must keep open-child guard: %v", e)
+	}
+}
