@@ -322,6 +322,100 @@ func TestGenericSnapshotCacheFollowsHeadAndDoesNotAlias(t *testing.T) {
 	}
 }
 
+func TestCapturedSnapshotRecordsStayConsistentWithoutRefreshingHead(t *testing.T) {
+	ctx := context.Background()
+	_, service := testRows()
+	fast := &immutableReadService{documentService: service}
+	tr := newRowTransport(fast, "team").(*rowTransport)
+	tr.domainProjection = false
+	original := []byte(`{"schema":"first","records":{"one":{"value":"old"}},"indexes":{"owner":["one"]}}`)
+	if err := tr.CompareAndSwap(ctx, 0, original); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := tr.CaptureSnapshotRecords(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posting, err := reader.ReadSnapshotRecords(ctx, "indexes", []string{"owner"}, nil)
+	if err != nil || string(posting.Records["owner"]) != `["one"]` {
+		t.Fatalf("captured posting: %+v %v", posting, err)
+	}
+	changed := []byte(`{"schema":"next","records":{"one":{"value":"new"},"added":true},"indexes":{"owner":["added"]}}`)
+	if err = tr.CompareAndSwap(ctx, posting.Version, changed); err != nil {
+		t.Fatal(err)
+	}
+	reads := service.reads
+	// A caller may own and edit the returned JSON without altering the view.
+	posting.Fields["schema"][0] = '!'
+	rows, err := reader.ReadSnapshotRecords(ctx, "records", []string{"one", "added"}, &posting.Version)
+	if err != nil || string(rows.Records["one"]) != `{"value":"old"}` || len(rows.Records["added"]) != 0 || string(rows.Fields["schema"]) != `"first"` {
+		t.Fatalf("captured read mixed publications or aliased fields: %+v %v", rows, err)
+	}
+	if service.reads != reads {
+		t.Fatal("captured continuation refreshed the mutable head")
+	}
+	wrong := posting.Version + 1
+	if _, err = reader.ReadSnapshotRecords(ctx, "records", []string{"one"}, &wrong); !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("mismatched captured version: %v", err)
+	}
+	if _, err = tr.ReadSnapshotRecords(ctx, "records", []string{"one"}, &posting.Version); !errors.Is(err, ErrSnapshotConflict) {
+		t.Fatalf("ordinary current-head read accepted a stale version: %v", err)
+	}
+	next, err := tr.CaptureSnapshotRecords(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err = next.ReadSnapshotRecords(ctx, "records", []string{"one", "added"}, nil)
+	if err != nil || string(rows.Records["one"]) != `{"value":"new"}` || string(rows.Records["added"]) != "true" || rows.Version == posting.Version {
+		t.Fatalf("fresh capture missed publication: %+v %v", rows, err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err = reader.ReadSnapshotRecords(canceled, "records", []string{"one"}, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("captured read ignored cancellation: %v", err)
+	}
+}
+
+func TestCapturedSnapshotRecordsPreserveLegacyAndMaintenanceBoundaries(t *testing.T) {
+	ctx := context.Background()
+	tr, service := testRows()
+	tr.domainProjection = false
+	legacy := []byte(`{"schema":"legacy","records":{"one":"original"}}`)
+	if err := service.CompareAndSwap(ctx, 0, legacy); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := tr.CaptureSnapshotRecords(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = tr.CompareAndSwap(ctx, service.versions[service.anchor], []byte(`{"schema":"current","records":{"one":"new"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := reader.ReadSnapshotRecords(ctx, "records", []string{"one"}, nil)
+	if err != nil || string(got.Records["one"]) != `"original"` {
+		t.Fatalf("legacy capture changed: %+v %v", got, err)
+	}
+	raw, version, err := service.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := readRowHead(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head.Maintenance = "collector"
+	raw, err = json.Marshal(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.CompareAndSwap(ctx, version, raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tr.CaptureSnapshotRecords(ctx); !errors.Is(err, ErrSnapshotMaintenance) {
+		t.Fatalf("capture bypassed collection fence: %v", err)
+	}
+}
+
 func TestGenericIndexedSnapshotReadsBoundedRecords(t *testing.T) {
 	ctx := context.Background()
 	svc := &documentService{docs: map[string][]byte{}, versions: map[string]uint64{}, anchor: "infra"}

@@ -1,6 +1,7 @@
 package antfly
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -94,6 +95,48 @@ type SnapshotRecords struct {
 	Version uint64
 }
 
+// SnapshotRecordReader provides selected records and schema fields from a head.
+type SnapshotRecordReader interface {
+	ReadSnapshotRecords(context.Context, string, []string, *uint64) (SnapshotRecords, error)
+}
+
+// SnapshotRecordCapturer captures one committed head for a compound read.
+// Keep the transport open while using the reader. Immutable content is still
+// hash-verified; capture does not acquire a garbage-collection lease. Storage
+// and integrity errors propagate rather than returning partial results.
+type SnapshotRecordCapturer interface {
+	CaptureSnapshotRecords(context.Context) (SnapshotRecordReader, error)
+}
+
+type capturedSnapshotRecords struct {
+	transport *rowTransport
+	raw       []byte
+	version   uint64
+}
+
+func (r *rowTransport) CaptureSnapshotRecords(ctx context.Context) (SnapshotRecordReader, error) {
+	if r.domainProjection {
+		return nil, errUnsupported("generic indexed snapshot on core work")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	raw, version, err := r.documentTransport.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > 0 {
+		if _, err = readRowHead(raw); err != nil {
+			return nil, err
+		}
+	}
+	return &capturedSnapshotRecords{transport: r, raw: bytes.Clone(raw), version: version}, nil
+}
+
+func (r *capturedSnapshotRecords) ReadSnapshotRecords(ctx context.Context, field string, ids []string, expected *uint64) (SnapshotRecords, error) {
+	return r.transport.readSnapshotRecordsAt(ctx, r.raw, r.version, field, ids, expected)
+}
+
 // ReadSnapshotRecords uses the committed head's hash-bucket index. An optional
 // expected version makes a multi-stage index lookup fail rather than mix heads.
 func (r *rowTransport) ReadSnapshotRecords(ctx context.Context, field string, ids []string, expected *uint64) (SnapshotRecords, error) {
@@ -105,6 +148,13 @@ func (r *rowTransport) ReadSnapshotRecords(ctx context.Context, field string, id
 	}
 	raw, v, err := r.documentTransport.Load(ctx)
 	if err != nil {
+		return SnapshotRecords{}, err
+	}
+	return r.readSnapshotRecordsAt(ctx, raw, v, field, ids, expected)
+}
+
+func (r *rowTransport) readSnapshotRecordsAt(ctx context.Context, raw []byte, v uint64, field string, ids []string, expected *uint64) (SnapshotRecords, error) {
+	if err := ctx.Err(); err != nil {
 		return SnapshotRecords{}, err
 	}
 	if expected != nil && *expected != v {

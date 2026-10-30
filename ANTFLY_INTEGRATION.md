@@ -698,3 +698,22 @@ The complete native/remote backend suite passes 182 cases with no skips or
 failures after this change. This reduces native admission calls for uncached
 immutable records from two to one; it does not establish factory liveness or
 replace the remaining concurrent embedded acceptance and recovery checks.
+
+
+Generic infrastructure snapshots now expose an optional captured record reader.
+It reads the committed head once and resolves subsequent directory, posting and
+record lookups from that immutable head, so unrelated publications do not
+restart a compound query. Immutable content hashes, schema metadata and captured
+version checks still apply. The reader exposes no mutation operations; writes
+continue to compare against the current head. Keep the transport open while
+using a reader. Capture does not lease immutable history against collection,
+and storage or integrity failures propagate rather than produce partial data.
+
+The complete backend gate passes 187 cases without skips against embedded and
+remote storage with the optimized native admission candidate. Tests include a
+second writer publishing between an index read and its record hydration, an
+old captured read remaining consistent, stale publication being refused, caller
+JSON ownership, cancellation, legacy snapshots and collection fences. The Gas
+City adapter must opt into this capability and replace its full-snapshot
+dependency-batch fallback before it benefits from these reads. Factory crash
+recovery and sustained healthy runtime remain separate acceptance gates.

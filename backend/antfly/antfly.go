@@ -87,11 +87,18 @@ func OpenSnapshot(ctx context.Context, target Target, opts backend.OpenOptions) 
 // SnapshotRecords contains selected records and schema fields from one head.
 type SnapshotRecords = impl.SnapshotRecords
 
+// SnapshotRecordReader reads selected records without exposing mutation methods.
+type SnapshotRecordReader = impl.SnapshotRecordReader
+
+// SnapshotRecordCapturer captures a committed head for multi-stage indexed reads.
+// The transport must remain open, and storage/collection errors still propagate.
+type SnapshotRecordCapturer = impl.SnapshotRecordCapturer
+
 // IndexedSnapshotTransport supports bounded point and batch reads without
 // reconstructing a whole workspace. Expected versions pin multi-stage lookups.
 type IndexedSnapshotTransport interface {
 	SnapshotTransport
-	ReadSnapshotRecords(context.Context, string, []string, *uint64) (SnapshotRecords, error)
+	SnapshotRecordReader
 }
 
 // BackupSnapshot archives one committed logical workspace; native memory
