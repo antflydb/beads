@@ -12,6 +12,7 @@ import (
 
 const coreQueryField = "_core_query_index"
 const coreQueryKind = "_core_query_lookup"
+const coreDynamicReadinessField = "_core_dynamic_readiness"
 
 // Posting directories name only occupied hash shards. Both directories and
 // postings are immutable rows published under the same workspace head.
@@ -29,6 +30,20 @@ func addCoreQueryIndex(fields, rows map[string]json.RawMessage) error {
 		}
 		shard := key + "/" + digest([]byte(id))[:2]
 		postings[key][shard] = append(postings[key][shard], id)
+	}
+	delete(fields, coreDynamicReadinessField)
+	for key, raw := range rows {
+		if len(key) < 6 || key[:6] != "edges/" {
+			continue
+		}
+		var edge types.Dependency
+		if err := json.Unmarshal(raw, &edge); err != nil {
+			return err
+		}
+		if edge.Type == types.DepWaitsFor {
+			fields[coreDynamicReadinessField] = json.RawMessage(`true`)
+			break
+		}
 	}
 	// Even an empty workspace has a complete all-IDs directory.
 	postings[coreQueryKey("all", "")] = map[string][]string{}
@@ -147,7 +162,7 @@ func (s *Store) indexedQueryState(ctx context.Context, f types.IssueFilter) (*st
 		if err != nil {
 			return nil, true, err
 		}
-		if head == nil || string(head.Fields[coreQueryField]) != "1" {
+		if head == nil || string(head.Fields[coreQueryField]) != "1" || string(head.Fields[coreDynamicReadinessField]) == "true" {
 			return nil, false, nil
 		}
 		ids := map[string]bool{}

@@ -133,6 +133,7 @@ func TestDependencyAnnotationsNativeAndRemote(t *testing.T) {
 			defer s.Close()
 			exerciseDependencyAnnotations(t, s)
 			exerciseConditionalDependencies(t, s)
+			exerciseWaitsForFanout(t, s)
 		})
 	}
 }
@@ -173,5 +174,115 @@ func exerciseConditionalDependencies(t *testing.T, s *Store) {
 	blocked, _, err := s.IsBlocked(ctx, "bd-conditional-source")
 	if err != nil || blocked {
 		t.Fatalf("closed conditional blocker still blocks: %v %v", blocked, err)
+	}
+}
+
+func TestWaitsForFanoutReadiness(t *testing.T) {
+	s, _ := testStore(t)
+	exerciseWaitsForFanout(t, s)
+}
+func exerciseWaitsForFanout(t *testing.T, s *Store) {
+	t.Helper()
+	ctx := context.Background()
+	for _, id := range []string{"bd-fanout-spawner", "bd-fanout-first", "bd-fanout-second", "bd-fanout-any", "bd-fanout-also"} {
+		createTestIssue(t, s, id)
+	}
+	l := &lifecycle{s}
+	created, err := l.Create(ctx, issueops.CreateRequest{Actor: "test", Issue: &types.Issue{ID: "bd-fanout-all", Title: "wait for children", IssueType: types.TypeTask}, WaitsFor: &issueops.WaitsFor{SpawnerID: "bd-fanout-spawner"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Issue.Dependencies) != 1 || created.Issue.Dependencies[0].Type != types.DepWaitsFor {
+		t.Fatalf("create lost fanout dependency: %+v", created.Issue)
+	}
+	for _, d := range []*types.Dependency{
+		{IssueID: "bd-fanout-any", DependsOnID: "bd-fanout-spawner", Type: types.DepWaitsFor, Metadata: `{"gate":"any-children","spawner_id":"ignored-other-id"}`},
+		{IssueID: "bd-fanout-also", DependsOnID: "bd-fanout-spawner", Type: types.DepWaitsFor, Metadata: `{"gate":"any-children","also_blocks":true}`},
+	} {
+		if err = s.AddDependency(ctx, d, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(id string, want bool) {
+		t.Helper()
+		blocked, _, err := s.IsBlocked(ctx, id)
+		if err != nil || blocked != want {
+			t.Fatalf("%s blocked=%v want=%v err=%v", id, blocked, want, err)
+		}
+		issue, err := s.GetIssue(ctx, id)
+		if err != nil || issue.IsBlocked != want {
+			t.Fatalf("%s point-read blocked=%v want=%v err=%v", id, issue, want, err)
+		}
+		ready, err := s.GetReadyWorkWithCounts(ctx, types.WorkFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		present := false
+		for _, i := range ready {
+			if i.ID == id {
+				present = true
+			}
+		}
+		if present == want {
+			t.Fatalf("%s ready=%v blocked=%v", id, present, want)
+		}
+	}
+	check("bd-fanout-all", false)
+	check("bd-fanout-any", false)
+	check("bd-fanout-also", true)
+	for _, id := range []string{"bd-fanout-first", "bd-fanout-second"} {
+		if err = s.AddDependency(ctx, &types.Dependency{IssueID: id, DependsOnID: "bd-fanout-spawner", Type: types.DepParentChild}, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check("bd-fanout-all", true)
+	check("bd-fanout-any", true)
+	if _, err = l.Close(ctx, issueops.CloseRequest{IssueID: "bd-fanout-all", Actor: "test"}); !errors.Is(err, storage.ErrCloseBlocked) {
+		t.Fatalf("fanout close fence: %v", err)
+	}
+	if _, err = l.Close(ctx, issueops.CloseRequest{IssueID: "bd-fanout-first", Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	check("bd-fanout-all", true)
+	check("bd-fanout-any", false)
+	check("bd-fanout-also", true)
+	if _, err = l.Close(ctx, issueops.CloseRequest{IssueID: "bd-fanout-second", Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	check("bd-fanout-all", false)
+	check("bd-fanout-also", true)
+	if _, err = l.Close(ctx, issueops.CloseRequest{IssueID: "bd-fanout-spawner", Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	check("bd-fanout-also", false)
+	// A late child must close an already-open fanout gate again. This checks
+	// that readiness never uses a one-time expansion or stale source flag.
+	createTestIssue(t, s, "bd-fanout-late")
+	if err = s.AddDependency(ctx, &types.Dependency{IssueID: "bd-fanout-late", DependsOnID: "bd-fanout-spawner", Type: types.DepParentChild}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	check("bd-fanout-all", true)
+	check("bd-fanout-any", false)
+	// A malformed legacy gate name defaults to all-children. Empty metadata
+	// uses the same compatibility rule; metadata.spawner_id is never authority.
+	if err = s.AddDependency(ctx, &types.Dependency{IssueID: "bd-fanout-any", DependsOnID: "bd-fanout-spawner", Type: types.DepWaitsFor, Metadata: `{"gate":"legacy-unknown"}`}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	check("bd-fanout-any", true)
+	if _, err = l.Close(ctx, issueops.CloseRequest{IssueID: "bd-fanout-late", Actor: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	check("bd-fanout-any", false)
+	raw, version, err := s.transport.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unsupported *storage.ErrUnsupported
+	if err = s.AddDependency(ctx, &types.Dependency{IssueID: "bd-fanout-any", DependsOnID: "external:other:spawner", Type: types.DepWaitsFor}, "test"); !errors.As(err, &unsupported) {
+		t.Fatalf("foreign dynamic gate must fail explicitly: %v", err)
+	}
+	after, next, err := s.transport.Load(ctx)
+	if err != nil || version != next || string(raw) != string(after) {
+		t.Fatalf("rejected foreign gate published: %v", err)
 	}
 }

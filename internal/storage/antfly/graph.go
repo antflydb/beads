@@ -31,8 +31,8 @@ func (st *state) addEdge(from, to string, kind types.DependencyType, actor strin
 	if kind == "" {
 		return storage.ErrValidation
 	}
-	if kind.IsBlockingEdge() && kind != types.DepBlocks && kind != types.DepConditionalBlocks {
-		return errUnsupported("DependencyEditor: advanced blocking edge")
+	if kind == types.DepWaitsFor && st.Issues[to] == nil {
+		return errUnsupported("DependencyEditor: cross-store dynamic fanout requires the owning graph plane")
 	}
 	key := edgeKey(from, to)
 	if old := st.Edges[key]; old != nil {
@@ -119,6 +119,35 @@ func (st *state) addAnnotatedEdge(from, to string, kind types.DependencyType, me
 	return true, nil
 }
 
+// waitsForBlocked evaluates direct children of the edge target, never the
+// redundant spawner_id metadata. A collapsed needs edge also gates on the
+// spawner itself, independently of any-children early completion.
+func (st *state) waitsForBlocked(d *types.Dependency) bool {
+	target := st.Issues[d.DependsOnID]
+	if target == nil {
+		return true
+	}
+	var meta types.WaitsForMeta
+	_ = json.Unmarshal([]byte(d.Metadata), &meta)
+	if meta.AlsoBlocks && !resolved(target.Issue.Status) {
+		return true
+	}
+	active, closed := false, false
+	for _, edge := range st.Edges {
+		if edge.Type != types.DepParentChild || edge.DependsOnID != d.DependsOnID {
+			continue
+		}
+		child := st.Issues[edge.IssueID]
+		if child == nil {
+			active = true
+			continue
+		}
+		active = active || !resolved(child.Issue.Status)
+		closed = closed || child.Issue.Status == types.StatusClosed
+	}
+	return active && !(meta.Gate == types.WaitsForAnyChildren && closed)
+}
+
 func (st *state) reblock() {
 	for _, r := range st.Issues {
 		r.Issue.IsBlocked = false
@@ -132,7 +161,7 @@ func (st *state) reblock() {
 				continue
 			}
 			external := target == nil && storageops.IsExternalDepTarget(d.IssueID, d.DependsOnID)
-			blocked := ((d.Type == types.DepBlocks || d.Type == types.DepConditionalBlocks) && !external && (target == nil || !resolved(target.Issue.Status))) || (d.Type == types.DepParentChild && target != nil && target.Issue.IsBlocked)
+			blocked := ((d.Type == types.DepBlocks || d.Type == types.DepConditionalBlocks) && !external && (target == nil || !resolved(target.Issue.Status))) || (d.Type == types.DepParentChild && target != nil && target.Issue.IsBlocked) || (d.Type == types.DepWaitsFor && st.waitsForBlocked(d))
 			if blocked && !source.Issue.IsBlocked {
 				source.Issue.IsBlocked = true
 				changed = true

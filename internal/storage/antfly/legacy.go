@@ -118,11 +118,11 @@ func (s *Store) GetBlockingInfoForIssues(ctx context.Context, ids []string) (map
 		if d.Type == types.DepParentChild && slices.Contains(ids, d.IssueID) {
 			parents[d.IssueID] = d.DependsOnID
 		}
-		if d.Type != types.DepBlocks && d.Type != types.DepConditionalBlocks {
+		if !d.Type.IsBlockingEdge() {
 			continue
 		}
 		target := st.Issues[d.DependsOnID]
-		if target == nil || !resolved(target.Issue.Status) {
+		if (d.Type == types.DepWaitsFor && st.waitsForBlocked(d)) || (d.Type != types.DepWaitsFor && (target == nil || !resolved(target.Issue.Status))) {
 			if slices.Contains(ids, d.IssueID) {
 				blockers[d.IssueID] = append(blockers[d.IssueID], d.DependsOnID)
 			}

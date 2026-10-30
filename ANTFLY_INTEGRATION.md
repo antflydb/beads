@@ -486,8 +486,7 @@ outcomes return without replay or provisional results.
 Embedded and remote contract tests cover metadata references, stale-guard
 rollback, final hierarchy and cycle refusals, and guarded metadata-plus-close.
 The transport fixture additionally proves one publication per successful batch
-and no replay of an indeterminate commit. Advanced blocking dependency types
-remain explicitly unsupported. This supplies the atomic work-graph capability
+and no replay of an indeterminate commit. Static and conditional dependencies share scheduling-cycle validation. This supplies the atomic work-graph capability
 used by legacy formula adapters; full live factory qualification is separate.
 
 
@@ -603,8 +602,7 @@ mint a source revision so stale issue writers fail their version check. Invalid
 JSON and nil legacy requests fail without publication.
 
 The full backend target passed 173 cases with zero skips or failures with the
-native library and a remote server configured. Advanced blocking dependency
-kinds remain unsupported; this closes the annotation gap only.
+native library and a remote server configured. Annotation handling is shared by static and dynamic dependencies.
 
 
 Conditional-blocks edges now share direct-blocker readiness, close fences and
@@ -612,10 +610,35 @@ combined scheduling-cycle validation with blocks edges. Blocked parent state
 continues to propagate to children. Factory exports retain these prerequisites;
 batch hierarchy checks and cycle reports use the same scheduling-edge set.
 Embedded and remote regressions cover blocked descendants, rejected closure,
-mixed scheduling cycles and release after blocker closure. Waits-for dynamic
-fanout gates remain explicitly unsupported.
+mixed scheduling cycles and release after blocker closure. Dynamic fanout gates use child-based evaluation described below.
 
 The full backend gate passed 174 cases without skips or failures with native
 mmap and remote transports enabled and Go race instrumentation disabled. The
 race-instrumented full run hit the Go runtime's "too many address space
 collisions for -race mode" failure; it is not a passing race gate.
+
+
+### Legacy dynamic fanout gates
+
+Native work supports typed create-with-waits-for and dependency additions for
+local spawners. Readiness observes direct parent-child edges to the dependency
+target. All-children waits for every active child; any-children clears after a
+closed child. Empty fanouts clear. Late children re-block all-children gates.
+Pinned children are inactive, and only closed children satisfy any-children.
+The redundant metadata spawner ID is not authoritative. A collapsed
+`also_blocks` edge additionally waits for the spawner to resolve. Unknown legacy
+gate names default to all-children. Close checks use the same current snapshot.
+
+A head marker sends workspaces containing these gates through complete current
+snapshot reads rather than evaluating children from an incomplete indexed
+candidate set. Ordinary workspaces retain indexed point and query reads. This
+is a correctness fallback, not an indexed dynamic-fanout performance claim.
+Cross-store dynamic gates require the owning graph plane and return a typed
+unsupported error without publication. Ordinary cross-rig blocking references
+retain their existing router behavior.
+
+The full native and remote backend target passed 175 cases with no skips or
+failures. A focused native and remote gate also checked point-read flags after
+every fanout transition. These tests cover create defaults, all/any
+children, late children, spawner-ID authority, also-blocks close fences,
+legacy defaults and rejected foreign-gate atomicity.

@@ -39,8 +39,8 @@ func (l *lifecycle) Create(ctx context.Context, req issueops.CreateRequest) (out
 		if st.Config["antfly.branch.parent"] != "" && (i.Assignee != "" || i.Status == types.StatusInProgress) {
 			return errUnsupported("Create: live claims belong in main")
 		}
-		if domain.IsInfraType(i.IssueType) || i.IsTemplate || i.WispType != "" || (i.AwaitType != "" && i.IssueType != types.TypeGate) || (i.MolType != "" && i.IssueType != types.TypeMolecule) || attempt.WaitsFor != nil {
-			return errUnsupported("Lifecycle.Create: ephemeral, template, molecule, or waits-for")
+		if domain.IsInfraType(i.IssueType) || i.IsTemplate || i.WispType != "" || (i.AwaitType != "" && i.IssueType != types.TypeGate) || (i.MolType != "" && i.IssueType != types.TypeMolecule) {
+			return errUnsupported("Lifecycle.Create: ephemeral, template, or molecule")
 		}
 		if i.ID == "" {
 			var id [8]byte
@@ -64,6 +64,15 @@ func (l *lifecycle) Create(ctx context.Context, req issueops.CreateRequest) (out
 				parent, _ := st.issue(attempt.ParentID)
 				i.Labels = append(i.Labels, parent.Labels...)
 				st.Issues[i.ID].Issue.Labels = i.Labels
+			}
+		}
+		if attempt.WaitsFor != nil {
+			metadata, err := json.Marshal(types.WaitsForMeta{Gate: attempt.WaitsFor.Gate, SpawnerID: attempt.WaitsFor.SpawnerID})
+			if err != nil {
+				return err
+			}
+			if _, err = st.addAnnotatedEdge(i.ID, attempt.WaitsFor.SpawnerID, types.DepWaitsFor, string(metadata), "", req.Actor); err != nil {
+				return err
 			}
 		}
 		for _, d := range attempt.Dependencies {
@@ -239,6 +248,9 @@ func (st *state) canClose(i *types.Issue, actor string, force bool) error {
 	}
 	children := 0
 	for _, d := range st.Edges {
+		if d.IssueID == i.ID && d.Type == types.DepWaitsFor && st.waitsForBlocked(d) {
+			return storage.ErrCloseBlocked
+		}
 		if d.IssueID == i.ID && (d.Type == types.DepBlocks || d.Type == types.DepConditionalBlocks) {
 			target := st.Issues[d.DependsOnID]
 			if target == nil && storageops.IsExternalDepTarget(d.IssueID, d.DependsOnID) {

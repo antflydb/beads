@@ -90,6 +90,9 @@ func (s *Store) IsBlocked(ctx context.Context, id string) (bool, []string, error
 	}
 	blockers := []string{}
 	for _, d := range st.Edges {
+		if d.IssueID == id && d.Type == types.DepWaitsFor && st.waitsForBlocked(d) {
+			blockers = append(blockers, d.DependsOnID)
+		}
 		if d.IssueID == id && (d.Type == types.DepBlocks || d.Type == types.DepConditionalBlocks) {
 			if target := st.Issues[d.DependsOnID]; target == nil || !resolved(target.Issue.Status) {
 				blockers = append(blockers, d.DependsOnID)

@@ -130,7 +130,7 @@ func (s *Store) indexedIssue(ctx context.Context, id string) (*types.Issue, bool
 		if err != nil {
 			return nil, true, err
 		}
-		if head == nil || string(head.Fields[coreIndexField]) != "1" {
+		if head == nil || string(head.Fields[coreIndexField]) != "1" || string(head.Fields[coreDynamicReadinessField]) == "true" {
 			return nil, false, nil
 		}
 		lookupKey := coreIndexKind + "/" + id
