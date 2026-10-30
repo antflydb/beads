@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,15 @@ Examples:
 
 		if store != nil {
 			ctx := rootCtx
+			if scoped, ok := store.(interface {
+				ArchiveScope(context.Context) (string, error)
+			}); ok {
+				scope, err := scoped.ArchiveScope(ctx)
+				if err != nil {
+					return err
+				}
+				info["archive_scope"] = scope
+			}
 
 			issues, err := store.SearchIssues(ctx, "", types.IssueFilter{})
 			if err == nil {

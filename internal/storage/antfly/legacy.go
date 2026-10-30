@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/steveyegge/beads/internal/storage"
+	storageops "github.com/steveyegge/beads/internal/storage/issueops"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/workapi/storecounter"
 	"github.com/steveyegge/beads/internal/workapi/storestats"
@@ -266,4 +267,62 @@ func (s *Store) AddComment(ctx context.Context, id, actor, text string) error {
 func (s *Store) AddIssueComment(ctx context.Context, id, actor, text string) (*types.Comment, error) {
 	result, err := (&comments{s}).AddComment(ctx, issueops.AddCommentRequest{IssueID: id, Author: actor, Text: text})
 	return result.Comment, err
+}
+
+// GetDependencyCounts counts blocking edges in both logical storage tiers.
+// Parent/grouping edges are returned separately by dependency record reads.
+func (s *Store) GetDependencyCounts(ctx context.Context, ids []string) (map[string]*types.DependencyCounts, error) {
+	st, _, err := s.load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*types.DependencyCounts, len(ids))
+	for _, id := range ids {
+		out[id] = &types.DependencyCounts{}
+	}
+	for _, edge := range st.Edges {
+		if edge.Type != types.DepBlocks {
+			continue
+		}
+		if counts := out[edge.IssueID]; counts != nil {
+			counts.DependencyCount++
+		}
+		if counts := out[edge.DependsOnID]; counts != nil {
+			counts.DependentCount++
+		}
+	}
+	return out, nil
+}
+
+// PartitionWispIDs reports the native logical plane used by export/import.
+func (s *Store) PartitionWispIDs(ctx context.Context, ids []string) (wisps, durable []string, err error) {
+	st, _, err := s.load(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	wisps, durable = []string{}, []string{}
+	for _, id := range ids {
+		if record := st.Issues[id]; record != nil {
+			if storageops.IsWisp(&record.Issue) {
+				wisps = append(wisps, id)
+			} else {
+				durable = append(durable, id)
+			}
+		}
+	}
+	return wisps, durable, nil
+}
+
+// ArchiveScope labels exported project/branch snapshots without SQL or
+// exposing endpoint addresses, database paths or credentials.
+func (s *Store) ArchiveScope(ctx context.Context) (string, error) {
+	st, _, err := s.load(ctx)
+	if err != nil {
+		return "", err
+	}
+	project := st.Config["project_id"]
+	if project == "" {
+		return "", fmt.Errorf("antfly: project identity required for archive scope")
+	}
+	return "antfly_" + digest([]byte(project + "\x00" + st.Config["antfly.branch.id"]))[:24], nil
 }

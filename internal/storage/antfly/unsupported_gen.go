@@ -187,11 +187,6 @@ func (unsupportedDoltStorage) GetConflicts(_ context.Context) (_ []storage.Confl
 	return
 }
 
-func (unsupportedDoltStorage) GetDependencyCounts(_ context.Context, _ []string) (_ map[string]*types.DependencyCounts, err error) {
-	err = errUnsupported("GetDependencyCounts")
-	return
-}
-
 func (unsupportedDoltStorage) GetDependencyTree(_ context.Context, _ string, _ int, _ bool, _ bool) (_ []*types.TreeNode, err error) {
 	err = errUnsupported("GetDependencyTree")
 	return
@@ -547,4 +542,4 @@ func (unsupportedDoltStorage) UpdateIssueType(_ context.Context, _ string, _ str
 	return
 }
 
-// NOTE: partial shell (106 of 205 methods generated; 99 left to this package's hand-written set).
+// NOTE: partial shell (105 of 205 methods generated; 100 left to this package's hand-written set).

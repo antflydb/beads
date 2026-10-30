@@ -372,3 +372,45 @@ func TestAntflySweepPreviewUsesOneCommittedSnapshot(t *testing.T) {
 		t.Fatalf("preview=%+v error=%v root snapshot reads=%d", out, e, counted.loads)
 	}
 }
+
+func TestNativeExportRelationsCountOnlyBlockingEdgesAndPreservePlanes(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"bd-export-root", "bd-export-child", "bd-export-blocker"} {
+		createTestIssue(t, s, id)
+	}
+	if err := s.mutate(ctx, func(st *state) error {
+		st.Config["project_id"] = "export-project"
+		st.Issues["bd-export-child"].Issue.NoHistory = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	g := &graph{s}
+	_, err := g.AddDependencies(ctx, issueops.AddDependenciesRequest{Edges: []issueops.DependencyEdge{
+		{IssueID: "bd-export-child", DependsOnID: "bd-export-root", Type: types.DepParentChild},
+		{IssueID: "bd-export-child", DependsOnID: "bd-export-blocker", Type: types.DepBlocks},
+	}, Actor: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts, err := s.GetDependencyCounts(ctx, []string{"bd-export-child", "bd-export-root", "bd-export-blocker", "bd-missing"})
+	if err != nil || counts["bd-export-child"].DependencyCount != 1 || counts["bd-export-root"].DependentCount != 0 || counts["bd-export-blocker"].DependentCount != 1 || *counts["bd-missing"] != (types.DependencyCounts{}) {
+		t.Fatalf("export counts=%+v err=%v", counts, err)
+	}
+	wisps, durable, err := s.PartitionWispIDs(ctx, []string{"bd-export-child", "bd-export-root", "bd-missing"})
+	if err != nil || len(wisps) != 1 || wisps[0] != "bd-export-child" || len(durable) != 1 || durable[0] != "bd-export-root" {
+		t.Fatalf("planes=%v %v err=%v", wisps, durable, err)
+	}
+	first, err := s.ArchiveScope(ctx)
+	if err != nil || !strings.HasPrefix(first, "antfly_") {
+		t.Fatalf("scope=%s err=%v", first, err)
+	}
+	if err = s.mutate(ctx, func(st *state) error { st.Config["antfly.branch.id"] = "fork"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.ArchiveScope(ctx)
+	if err != nil || first == second {
+		t.Fatalf("branch scope collision: %s %s %v", first, second, err)
+	}
+}
