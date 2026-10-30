@@ -49,6 +49,9 @@ func (l *lifecycle) Create(ctx context.Context, req issueops.CreateRequest) (out
 			}
 			i.ID = strings.TrimSuffix(st.Config["issue_prefix"], "-") + "-" + hex.EncodeToString(id[:])
 		}
+		if at, retired := st.Retired[i.ID]; retired {
+			return &issueops.IdempotencyExpiredError{ID: i.ID, ClosedAt: at}
+		}
 		if st.Issues[i.ID] != nil {
 			return storage.ErrAlreadyExists
 		}

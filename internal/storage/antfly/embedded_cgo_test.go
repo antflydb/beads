@@ -417,3 +417,75 @@ func TestNativeIndexedSnapshotBackup(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestNativeDatabaseArchivePreservesSeparateWorkspaces(t *testing.T) {
+	lib := os.Getenv("ANTFLY_TEST_LIBRARY")
+	if lib == "" {
+		t.Skip("ANTFLY_TEST_LIBRARY required")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	target := Target{Path: filepath.Join(dir, "source.aflite"), Library: lib, Table: "infra", Workspace: "one"}
+	source, e := OpenSnapshot(ctx, target, backends.OpenOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer source.Close()
+	if e = source.CompareAndSwap(ctx, 0, []byte(`{"schema":"one","records":{"a":1}}`)); e != nil {
+		t.Fatal(e)
+	}
+	target.Workspace = "two"
+	other, e := OpenSnapshot(ctx, target, backends.OpenOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer other.Close()
+	if e = other.CompareAndSwap(ctx, 0, []byte(`{"schema":"two","records":{"b":2}}`)); e != nil {
+		t.Fatal(e)
+	}
+
+	if _, e = source.Memory(ctx, "backup-space", "create", "create", json.RawMessage(`{}`)); e != nil {
+		t.Fatal(e)
+	}
+	observation := json.RawMessage(`{"evidence":[{"id":"e1","text":"Backup memory sentinel"}],"assertions":[{"id":"a1","subject":"project","predicate":"guidance","value":"retained","statement":"Backup memory sentinel","evidence":[{"id":"e1"}]}]}`)
+	if _, e = source.Memory(ctx, "backup-space", "observe", "observe", observation); e != nil {
+		t.Fatal(e)
+	}
+	archivePath := filepath.Join(dir, "database.afb")
+	file, e := os.Create(archivePath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = source.(*rowTransport).WriteDatabaseBackup(ctx, file); e != nil {
+		_ = file.Close()
+		t.Fatal(e)
+	}
+	if e = file.Close(); e != nil {
+		t.Fatal(e)
+	}
+	restoredPath := filepath.Join(dir, "restored.aflite")
+	if e = RestoreDatabaseBackupFile(ctx, lib, restoredPath, archivePath); e != nil {
+		t.Fatal(e)
+	}
+	if e = RestoreDatabaseBackupFile(ctx, lib, restoredPath, archivePath); e == nil {
+		t.Fatal("engine restore replaced an existing destination")
+	}
+	target.Path = restoredPath
+	for _, workspace := range []string{"one", "two"} {
+		target.Workspace = workspace
+		copy, e := OpenSnapshot(ctx, target, backends.OpenOptions{})
+		if e != nil {
+			t.Fatal(e)
+		}
+		raw, _, e := copy.Load(ctx)
+		memory, memoryErr := copy.Memory(ctx, "backup-space", "recall", "", json.RawMessage(`{"query":"Backup memory sentinel"}`))
+		if memoryErr != nil || !strings.Contains(string(memory), "Backup memory sentinel") {
+			_ = copy.Close()
+			t.Fatalf("restored memory: %s %v", memory, memoryErr)
+		}
+		_ = copy.Close()
+		if e != nil || !strings.Contains(string(raw), `"schema":"`+workspace+`"`) {
+			t.Fatalf("restored %s: %s %v", workspace, raw, e)
+		}
+	}
+}

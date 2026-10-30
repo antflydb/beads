@@ -17,18 +17,8 @@ import (
 // override the real slice. DO NOT hand-edit — regenerate with `go generate ./...`.
 type unsupportedDoltStorage struct{}
 
-func (unsupportedDoltStorage) AddComment(_ context.Context, _ string, _ string, _ string) (err error) {
-	err = errUnsupported("AddComment")
-	return
-}
-
 func (unsupportedDoltStorage) AddFederationPeer(_ context.Context, _ *storage.FederationPeer) (err error) {
 	err = errUnsupported("AddFederationPeer")
-	return
-}
-
-func (unsupportedDoltStorage) AddIssueComment(_ context.Context, _ string, _ string, _ string) (_ *types.Comment, err error) {
-	err = errUnsupported("AddIssueComment")
 	return
 }
 
@@ -184,16 +174,6 @@ func (unsupportedDoltStorage) GetAllEventsSince(_ context.Context, _ time.Time) 
 
 func (unsupportedDoltStorage) GetBlockedIssues(_ context.Context, _ types.WorkFilter) (_ []*types.BlockedIssue, err error) {
 	err = errUnsupported("GetBlockedIssues")
-	return
-}
-
-func (unsupportedDoltStorage) GetCommentCounts(_ context.Context, _ []string) (_ map[string]int, err error) {
-	err = errUnsupported("GetCommentCounts")
-	return
-}
-
-func (unsupportedDoltStorage) GetCommentsForIssues(_ context.Context, _ []string) (_ map[string][]*types.Comment, err error) {
-	err = errUnsupported("GetCommentsForIssues")
 	return
 }
 
@@ -532,11 +512,6 @@ func (unsupportedDoltStorage) Status(_ context.Context) (_ *storage.Status, err 
 	return
 }
 
-func (unsupportedDoltStorage) Sweeper() (_ issueops.Sweeper, err error) {
-	err = errUnsupported("Sweeper")
-	return
-}
-
 func (unsupportedDoltStorage) Sync(_ context.Context, _ string, _ string) (_ *storage.SyncResult, err error) {
 	err = errUnsupported("Sync")
 	return
@@ -572,4 +547,4 @@ func (unsupportedDoltStorage) UpdateIssueType(_ context.Context, _ string, _ str
 	return
 }
 
-// NOTE: partial shell (111 of 205 methods generated; 94 left to this package's hand-written set).
+// NOTE: partial shell (106 of 205 methods generated; 99 left to this package's hand-written set).

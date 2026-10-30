@@ -31,7 +31,20 @@ type documentScanner interface {
 // Old readers may fail while obsolete rows are removed; they never receive a
 // partially reconstructed snapshot. A crashed collector leaves a resumable
 // fence. Every delete batch and fence release condition on the owner's head.
-func (r *rowTransport) CollectGarbage(ctx context.Context) (result SnapshotGCResult, err error) {
+
+func (r *rowTransport) CollectGarbage(ctx context.Context) (SnapshotGCResult, error) {
+	return r.collectGarbage(ctx, nil)
+}
+
+// CollectGarbageChecked validates caller-owned schema metadata even when a
+// crashed collector's fence prevents ordinary snapshot reads.
+func (r *rowTransport) CollectGarbageChecked(ctx context.Context, validate func(map[string]json.RawMessage) error) (SnapshotGCResult, error) {
+	if validate == nil {
+		return SnapshotGCResult{}, fmt.Errorf("nil snapshot maintenance validator")
+	}
+	return r.collectGarbage(ctx, validate)
+}
+func (r *rowTransport) collectGarbage(ctx context.Context, validate func(map[string]json.RawMessage) error) (result SnapshotGCResult, err error) {
 	if r.domainProjection {
 		return result, errUnsupported("garbage collection of branching workspaces")
 	}
@@ -49,6 +62,11 @@ func (r *rowTransport) CollectGarbage(ctx context.Context) (result SnapshotGCRes
 	}
 	if head.StorageFormat != 2 || head.Fields == nil || head.Pages == nil {
 		return result, fmt.Errorf("snapshot must use row format 2 before collection")
+	}
+	if validate != nil {
+		if err = validate(head.Fields); err != nil {
+			return result, err
+		}
 	}
 	var token [16]byte
 	if _, err = rand.Read(token[:]); err != nil {

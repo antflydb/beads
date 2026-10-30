@@ -310,3 +310,65 @@ func TestAntflyLegacyPouredMoleculeProvider(t *testing.T) {
 		t.Fatalf("legacy root must keep open-child guard: %v", e)
 	}
 }
+
+func TestAntflyStockSweeperProtectsReferencesAndRetiresIDs(t *testing.T) {
+	s, tr := testStore(t)
+	ctx := context.Background()
+	createTestIssue(t, s, "bd-old")
+	createTestIssue(t, s, "bd-live")
+	if e := s.CloseIssue(ctx, "bd-old", "done", "test", ""); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := (&lifecycle{s}).Update(ctx, issueops.UpdateRequest{Actor: "test", IssueID: "bd-live", Patch: issueops.IssuePatch{Notes: issueops.Field[string]{Set: true, Value: "See (bd-old)."}}}); e != nil {
+		t.Fatal(e)
+	}
+	sweeper, e := s.Sweeper()
+	if e != nil {
+		t.Fatal(e)
+	}
+	result, e := sweeper.Sweep(ctx, issueops.SweepRequest{Actor: "test", Tier: issueops.SweepDurable, IDPattern: "bd-old", ProtectReferenced: true})
+	if e != nil || result.Swept != 0 || result.Skipped.Referenced != 1 {
+		t.Fatalf("protected sweep: %+v %v", result, e)
+	}
+	before := tr.version
+	result, e = sweeper.Sweep(ctx, issueops.SweepRequest{Actor: "test", Tier: issueops.SweepDurable, IDPattern: "bd-old", RetainIDs: true, DryRun: true})
+	if e != nil || result.Swept != 1 || tr.version != before {
+		t.Fatalf("sweep preview: %+v %v", result, e)
+	}
+	result, e = sweeper.Sweep(ctx, issueops.SweepRequest{Actor: "test", Tier: issueops.SweepDurable, IDPattern: "bd-old", RetainIDs: true})
+	if e != nil || result.Swept != 1 {
+		t.Fatalf("retaining sweep: %+v %v", result, e)
+	}
+	issue := &types.Issue{ID: "bd-old", Title: "must not replay", IssueType: types.TypeTask}
+	if e = s.CreateIssue(ctx, issue, "test"); e == nil {
+		t.Fatal("retired id was reused")
+	}
+}
+
+type countedSnapshotReads struct {
+	Transport
+	loads int
+}
+
+func (t *countedSnapshotReads) Load(ctx context.Context) ([]byte, uint64, error) {
+	t.loads++
+	return t.Transport.Load(ctx)
+}
+func TestAntflySweepPreviewUsesOneCommittedSnapshot(t *testing.T) {
+	s, tr := testStore(t)
+	ctx := context.Background()
+	createTestIssue(t, s, "bd-old-preview")
+	if e := s.CloseIssue(ctx, "bd-old-preview", "done", "test", ""); e != nil {
+		t.Fatal(e)
+	}
+	counted := &countedSnapshotReads{Transport: tr}
+	reader := New(counted, true)
+	sweeper, e := reader.Sweeper()
+	if e != nil {
+		t.Fatal(e)
+	}
+	out, e := sweeper.Sweep(ctx, issueops.SweepRequest{Tier: issueops.SweepDurable, IDPattern: "bd-old-preview", DryRun: true})
+	if e != nil || out.Swept != 1 || counted.loads != 1 {
+		t.Fatalf("preview=%+v error=%v root snapshot reads=%d", out, e, counted.loads)
+	}
+}

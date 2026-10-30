@@ -226,3 +226,44 @@ func (s *Store) CloseIssue(ctx context.Context, id, reason, actor, session strin
 	_, err := (&lifecycle{s}).Close(ctx, issueops.CloseRequest{Actor: actor, IssueID: id, Reason: reason, Session: session})
 	return err
 }
+
+// GetCommentsForIssues answers the bulk relation read used by stock JSONL
+// export from one committed snapshot, including empty comment lists.
+func (s *Store) GetCommentsForIssues(ctx context.Context, ids []string) (map[string][]*types.Comment, error) {
+	st, _, err := s.load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string][]*types.Comment, len(ids))
+	for _, id := range ids {
+		if st.Issues[id] != nil {
+			result[id] = append([]*types.Comment{}, st.hydrate(id).Comments...)
+		}
+	}
+	return result, nil
+}
+
+// GetCommentCounts uses the same bulk comment snapshot as export.
+func (s *Store) GetCommentCounts(ctx context.Context, ids []string) (map[string]int, error) {
+	rows, err := s.GetCommentsForIssues(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(rows))
+	for id, comments := range rows {
+		counts[id] = len(comments)
+	}
+	return counts, nil
+}
+
+// AddComment routes legacy consumers through the guarded comment role.
+func (s *Store) AddComment(ctx context.Context, id, actor, text string) error {
+	_, err := (&comments{s}).AddComment(ctx, issueops.AddCommentRequest{IssueID: id, Author: actor, Text: text})
+	return err
+}
+
+// AddIssueComment returns the detached comment created by the shared role.
+func (s *Store) AddIssueComment(ctx context.Context, id, actor, text string) (*types.Comment, error) {
+	result, err := (&comments{s}).AddComment(ctx, issueops.AddCommentRequest{IssueID: id, Author: actor, Text: text})
+	return result.Comment, err
+}

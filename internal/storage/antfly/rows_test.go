@@ -504,3 +504,26 @@ func TestRemoteSnapshotIndexedArchiveAndCollection(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestSnapshotCollectorValidatesSchemaBeforeAdoptingFence(t *testing.T) {
+	svc := &documentService{docs: map[string][]byte{}, versions: map[string]uint64{}, anchor: "infra"}
+	tr := &rowTransport{documentTransport: svc, workspace: "infra"}
+	ctx := context.Background()
+	if e := tr.CompareAndSwap(ctx, 0, []byte(`{"schema":"foreign","records":{"one":1}}`)); e != nil {
+		t.Fatal(e)
+	}
+	var head rowHead
+	if e := json.Unmarshal(svc.docs[svc.anchor], &head); e != nil {
+		t.Fatal(e)
+	}
+	head.Maintenance = "crashed"
+	svc.docs[svc.anchor], _ = json.Marshal(head)
+	before := string(svc.docs[svc.anchor])
+	refusal := errors.New("wrong caller schema")
+	if _, e := tr.CollectGarbageChecked(ctx, func(map[string]json.RawMessage) error { return refusal }); !errors.Is(e, refusal) {
+		t.Fatal(e)
+	}
+	if string(svc.docs[svc.anchor]) != before {
+		t.Fatal("adopted a foreign workspace before validation")
+	}
+}

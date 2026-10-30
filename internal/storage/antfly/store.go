@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ type state struct {
 	Integrations       map[string]Integration       `json:"integrations"`
 	Knowledge          *KnowledgeState              `json:"knowledge,omitempty"`
 	KnowledgePreparing *KnowledgePreparation        `json:"knowledge_preparing,omitempty"`
+	Retired            map[string]time.Time         `json:"retired,omitempty"`
 	Format             int                          `json:"format"`
 	Revision           uint64                       `json:"revision"`
 	Config             map[string]string            `json:"config"`
@@ -55,6 +57,9 @@ type event struct {
 }
 
 func (st *state) initialize() {
+	if st.Retired == nil {
+		st.Retired = map[string]time.Time{}
+	}
 	if st.Branches == nil {
 		st.Branches = map[string]Branch{}
 	}
@@ -373,3 +378,15 @@ func (s *Store) openTarget(ctx context.Context, target Target, provision bool) (
 
 // Querier exposes the shared validated boolean-query role over native reads.
 func (s *Store) Querier() (issueops.Querier, error) { return storequerier.New(s) }
+
+// WriteDatabaseBackup writes the entire native catalog, including memory data
+// outside this work workspace, through the engine's archive implementation.
+func (s *Store) WriteDatabaseBackup(ctx context.Context, writer io.Writer) error {
+	engine, ok := s.transport.(interface {
+		WriteDatabaseBackup(context.Context, io.Writer) error
+	})
+	if !ok {
+		return errUnsupported("native database backup")
+	}
+	return engine.WriteDatabaseBackup(ctx, writer)
+}

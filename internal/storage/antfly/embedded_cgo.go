@@ -37,6 +37,8 @@ typedef struct {
  antfly_error_code (*curation)(antfly_db*,antfly_slice,antfly_buffer*);
  antfly_error_code (*merge)(antfly_db*,antfly_slice,antfly_slice);
  antfly_error_code (*suppress)(antfly_db*,antfly_slice,antfly_slice,antfly_buffer*);
+ antfly_error_code (*backup)(antfly_db*,antfly_buffer*);
+ antfly_error_code (*restore_file)(const char*,const antfly_open_options*,const char*,bool,antfly_buffer*);
  void (*free_buffer)(antfly_buffer*);
 } beads_antfly;
 
@@ -67,6 +69,8 @@ static int beads_load(beads_antfly *a,const char *path) {
  LOAD(curation,"antfly_db_resolver_curation_json");
  LOAD(merge,"antfly_db_merge_resolver_keys_json");
  LOAD(suppress,"antfly_db_suppress_resolver_keys_json");
+ LOAD(backup,"antfly_db_backup");
+ LOAD(restore_file,"antfly_restore_backup_file_json");
  LOAD(free_buffer,"antfly_buffer_free_zero");
 #undef LOAD
     return a->abi()==ANTFLY_ABI_VERSION && a->options_size()==sizeof(antfly_open_options) && a->threading_mode()==ANTFLY_THREADING_SERIALIZED;
@@ -95,6 +99,8 @@ static antfly_error_code beads_memory(beads_antfly*a,antfly_slice space,antfly_s
 static antfly_error_code beads_native(beads_antfly*a,int op,antfly_slice name,antfly_slice body,antfly_buffer*out){
  switch(op){case 0:return a->add_index(a->table,body);case 1:return a->enrichment(a->table,body);case 2:return a->search(a->table,body,out);case 3:return a->resolve(a->table,name,body,out);case 4:return a->render(a->table,name,body,out);case 5:return a->reviews(a->table,body,out);case 6:return a->curation(a->table,name,out);case 7:return a->merge(a->table,name,body);case 8:return a->suppress(a->table,name,body,out);case 9:return a->scan(a->table,body,out);default:return ANTFLY_INVALID_ARGUMENT;}
 }
+static antfly_error_code beads_database_backup(beads_antfly*a,antfly_buffer*out){return a->backup(a->root,out);}
+static antfly_error_code beads_restore_file(beads_antfly*a,const char*path,const char*backup,antfly_buffer*out){antfly_open_options opts;antfly_error_code code=a->options_init(&opts);if(code!=ANTFLY_OK)return code;opts.storage_kind=ANTFLY_STORAGE_KIND_LITE;return a->restore_file(path,&opts,backup,false,out);}
 static void beads_free_buffer(beads_antfly*a,antfly_buffer*out){a->free_buffer(out);}
 static void beads_close(beads_antfly*a){if(a->table)a->close(a->table);if(a->root)a->close(a->root);if(a->library)dlclose(a->library);free(a);}
 */
@@ -107,6 +113,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/steveyegge/beads/internal/storage"
+	"io"
 	"os"
 	"runtime"
 	"slices"
@@ -432,4 +439,86 @@ func (e *embedded) ScanDocuments(ctx context.Context, from, to string, limit int
 		keys = append(keys, string(key))
 	}
 	return keys, nil
+}
+
+func (e *embedded) WriteDatabaseBackup(ctx context.Context, writer io.Writer) error {
+	if writer == nil {
+		return fmt.Errorf("nil database backup writer")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if e.native == nil {
+		return fmt.Errorf("Antfly store closed")
+	}
+	var out C.antfly_buffer
+	code := C.beads_database_backup(e.native, &out)
+	defer C.beads_free_buffer(e.native, &out)
+	if code != C.ANTFLY_OK {
+		return nativeError(code)
+	}
+	if uint64(out.len) > uint64(^uint(0)>>1) {
+		return fmt.Errorf("database archive exceeds addressable memory")
+	}
+	data := unsafe.Slice((*byte)(unsafe.Pointer(out.ptr)), int(out.len))
+	for len(data) > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		chunk := data
+		if len(chunk) > 1<<20 {
+			chunk = chunk[:1<<20]
+		}
+		n, err := writer.Write(chunk)
+		if err != nil {
+			return err
+		}
+		if n != len(chunk) {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
+}
+
+// RestoreDatabaseBackupFile restores the complete native catalog into a fresh
+// AntflyLite path. Existing destinations are never replaced.
+func RestoreDatabaseBackupFile(ctx context.Context, library, destination, archive string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if library == "" {
+		library = os.Getenv("ANTFLY_LIBRARY_PATH")
+	}
+	if library == "" || destination == "" || archive == "" {
+		return fmt.Errorf("library, destination and archive are required")
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	native := (*C.beads_antfly)(C.calloc(1, C.size_t(C.sizeof_beads_antfly)))
+	if native == nil {
+		return fmt.Errorf("allocate Antfly backup handle")
+	}
+	lib := C.CString(library)
+	defer C.free(unsafe.Pointer(lib))
+	if C.beads_load(native, lib) == 0 {
+		C.beads_close(native)
+		return fmt.Errorf("cannot load Antfly backup ABI")
+	}
+	defer C.beads_close(native)
+	path := C.CString(destination)
+	defer C.free(unsafe.Pointer(path))
+	file := C.CString(archive)
+	defer C.free(unsafe.Pointer(file))
+	var out C.antfly_buffer
+	code := C.beads_restore_file(native, path, file, &out)
+	defer C.beads_free_buffer(native, &out)
+	if code != C.ANTFLY_OK {
+		return nativeError(code)
+	}
+	return nil
 }

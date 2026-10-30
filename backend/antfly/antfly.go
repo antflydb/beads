@@ -5,6 +5,7 @@ package antfly
 import (
 	"context"
 	"encoding/json"
+	"io"
 
 	"github.com/steveyegge/beads/backend"
 	impl "github.com/steveyegge/beads/internal/storage/antfly"
@@ -118,4 +119,17 @@ type SnapshotGCResult = impl.SnapshotGCResult
 type SnapshotMaintenance interface {
 	SnapshotTransport
 	CollectGarbage(context.Context) (SnapshotGCResult, error)
+	CollectGarbageChecked(context.Context, func(map[string]json.RawMessage) error) (SnapshotGCResult, error)
+}
+
+// DatabaseBackupWriter writes a full native engine archive, including memory
+// and other tables, rather than a single logical workspace.
+type DatabaseBackupWriter interface {
+	WriteDatabaseBackup(context.Context, io.Writer) error
+}
+
+// RestoreDatabaseBackupFile restores a full native archive into a new AntflyLite
+// file. Existing destinations are never replaced.
+func RestoreDatabaseBackupFile(ctx context.Context, library, destination, archive string) error {
+	return impl.RestoreDatabaseBackupFile(ctx, library, destination, archive)
 }

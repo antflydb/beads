@@ -364,8 +364,8 @@ Row/snapshot/branch regression tests also pass with race instrumentation.
 The work lifecycle additionally accepts the fixed `convoy` and `merge-request`
 types used by Gas City for durable work grouping and integration requests.
 They use the same guarded lifecycle as ordinary work. This does not enable
-arbitrary custom types, session/message infrastructure, gates or molecules in
-the work workspace. The convoy regression was reproduced during the native
+arbitrary custom types or session/message infrastructure in the work workspace.
+Gate and persistent molecule support is described below. The convoy regression was reproduced during the native
 factory run and passes with the row/lifecycle regression suite.
 
 Generic snapshots retain a bounded per-handle read cache: up to 8 MiB / 2048
@@ -399,3 +399,18 @@ collection barrier before those records can be safely reclaimed.
 Persistent legacy poured molecules are now admitted to the work lifecycle.
 Their open-child close guard remains active. This does not admit templates or
 infrastructure records into the work ledger.
+
+The native Sweeper passes the shared purge/prune contract, including cutoff and
+pattern selection, pinned/live-dependent/reference protection, retained IDs,
+dry-run behavior, and one atomic history publication. Retired IDs cannot be
+silently recreated. Bulk comment reads now support the relational export path.
+Sweep previews select and count from a single committed snapshot.
+
+Embedded database archives use the engine's full native backup interface and
+restore into a new database file. The native qualification test verifies two
+independent workspaces and memory evidence after restore; existing destinations
+are refused. Remote full-cluster backup and restore were also exercised through
+the engine's existing administrative API against a fresh server, with matching
+catalogs and workspace heads. This is separate from logical workspace archives.
+Generic collection accepts a schema validator before adopting an interrupted
+maintenance fence, so foreign workspace state is never mutated during recovery.

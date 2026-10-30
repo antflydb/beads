@@ -26,6 +26,7 @@ go_library(
         "rows.go",
         "snapshot.go",
         "snapshot_gc.go",
+        "sweep.go",
         "store.go",
         "transaction.go",
         "transaction_unsupported_gen.go",
@@ -70,6 +71,7 @@ go_test(
     srcs = [
         "credentials_test.go",
         "querier_test.go",
+        "sweep_test.go",
         "embedded_cgo_test.go",
         "rows_test.go",
         "store_test.go",

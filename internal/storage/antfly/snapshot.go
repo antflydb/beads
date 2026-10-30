@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/steveyegge/beads/internal/storage/backends"
+	"io"
 	"strings"
 )
 
@@ -239,4 +240,16 @@ func RestoreSnapshotBackup(ctx context.Context, tr snapshotBackupTransport, enco
 		return err
 	}
 	return tr.CompareAndSwap(ctx, expected, data)
+}
+
+// WriteDatabaseBackup delegates a complete physical database archive to the
+// engine, including every table and memory namespace beyond this workspace.
+func (r *rowTransport) WriteDatabaseBackup(ctx context.Context, writer io.Writer) error {
+	engine, ok := r.documentTransport.(interface {
+		WriteDatabaseBackup(context.Context, io.Writer) error
+	})
+	if !ok {
+		return errUnsupported("database backup stream; remote engines use server backup jobs")
+	}
+	return engine.WriteDatabaseBackup(ctx, writer)
 }
