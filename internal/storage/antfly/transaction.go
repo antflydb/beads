@@ -70,6 +70,27 @@ func (s *Store) RunInTransaction(ctx context.Context, _ string, fn func(storage.
 func (t *transaction) CreateIssue(ctx context.Context, i *types.Issue, a string) error {
 	return t.s.CreateIssue(ctx, i, a)
 }
+
+// DeleteIssue is the actorless transactional primitive used by molecule burn.
+// Policy and selection belong to the caller; deleting a row also removes its
+// incident edges, while the outer stage publishes the entire burn atomically.
+func (t *transaction) DeleteIssue(ctx context.Context, id string) error {
+	return t.s.mutate(ctx, func(st *state) error {
+		if _, err := st.issue(id); err != nil {
+			return err
+		}
+		for key, edge := range st.Edges {
+			if edge.IssueID == id || edge.DependsOnID == id {
+				delete(st.Edges, key)
+			}
+		}
+		delete(st.Issues, id)
+		st.audit("delete", id, "")
+		st.reblock()
+		return nil
+	})
+}
+
 func (t *transaction) GetIssue(ctx context.Context, id string) (*types.Issue, error) {
 	return t.s.GetIssue(ctx, id)
 }

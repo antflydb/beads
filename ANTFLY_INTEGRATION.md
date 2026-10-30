@@ -541,3 +541,9 @@ Merge-slot records (`gt:slot`) are main-workspace coordination state: they are
 excluded from forks, preserved across merges and retention, and never returned
 as claimable ready work. Slot holder changes and persistent waiter queues use
 conditional workspace publication; unknown outcomes require reconciliation.
+
+Legacy patrol burn uses the actorless transactional delete primitive. It
+removes each selected row and incident edges inside the staged transaction,
+recomputes blockers, and publishes the whole burn once; a missing later row
+rolls the entire operation back. Selection and live-holder guards remain in
+the molecule command above this primitive.

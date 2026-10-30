@@ -30,11 +30,6 @@ func (unsupportedTransaction) CreateIssues(_ context.Context, _ []*types.Issue, 
 	return
 }
 
-func (unsupportedTransaction) DeleteIssue(_ context.Context, _ string) (err error) {
-	err = errUnsupported("DeleteIssue")
-	return
-}
-
 func (unsupportedTransaction) EventsSince(_ context.Context, _ storage.EventCursor, _ string, _ int) (_ []*types.Event, err error) {
 	err = errUnsupported("EventsSince")
 	return
@@ -105,4 +100,4 @@ func (unsupportedTransaction) UpdateIssue(_ context.Context, _ string, _ map[str
 	return
 }
 
-// NOTE: partial shell (18 of 34 methods generated; 16 left to this package's hand-written set).
+// NOTE: partial shell (17 of 34 methods generated; 17 left to this package's hand-written set).

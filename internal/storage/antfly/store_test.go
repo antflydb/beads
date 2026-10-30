@@ -596,3 +596,50 @@ func TestRemoteReadAdmissionRetryHonorsCancellation(t *testing.T) {
 		t.Fatalf("cancellation: attempts=%d err=%v", attempts.Load(), err)
 	}
 }
+
+func TestTransactionalBurnDeletesEdgesAndRollsBackWholeBatch(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	createTestIssue(t, s, "bd-burn-root")
+	createTestIssue(t, s, "bd-burn-child")
+	if err := s.AddDependency(ctx, &types.Dependency{IssueID: "bd-burn-child", DependsOnID: "bd-burn-root", Type: types.DepBlocks}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	err := s.RunInTransaction(ctx, "burn", func(tx storage.Transaction) error {
+		if err := tx.DeleteIssue(ctx, "bd-burn-root"); err != nil {
+			return err
+		}
+		child, err := tx.GetIssue(ctx, "bd-burn-child")
+		if err != nil {
+			return err
+		}
+		if child.IsBlocked || len(child.Dependencies) != 0 {
+			t.Fatal("staged delete did not remove blocker")
+		}
+		return tx.DeleteIssue(ctx, "bd-missing")
+	})
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("failed batch: %v", err)
+	}
+	root, err := s.GetIssue(ctx, "bd-burn-root")
+	if err != nil || root == nil {
+		t.Fatalf("rollback lost root: %v", err)
+	}
+	child, err := s.GetIssue(ctx, "bd-burn-child")
+	if err != nil || !child.IsBlocked {
+		t.Fatalf("rollback lost blocker: %+v %v", child, err)
+	}
+	if err = s.RunInTransaction(ctx, "burn", func(tx storage.Transaction) error {
+		if err := tx.DeleteIssue(ctx, "bd-burn-root"); err != nil {
+			return err
+		}
+		return tx.DeleteIssue(ctx, "bd-burn-child")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"bd-burn-root", "bd-burn-child"} {
+		if _, err = s.GetIssue(ctx, id); !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("burn retained %s: %v", id, err)
+		}
+	}
+}
