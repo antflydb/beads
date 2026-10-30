@@ -136,6 +136,15 @@ func exerciseMergeSlot(t *testing.T, s, other *Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ready, err := other.GetReadyWork(ctx, types.WorkFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, issue := range ready {
+		if issue.ID == slot.ID {
+			t.Fatal("merge slot leaked into ready work")
+		}
+	}
 	duplicate, err := other.MergeSlotCreate(ctx, "operator")
 	if err != nil || duplicate.ID != slot.ID {
 		t.Fatalf("idempotent creation: %+v %v", duplicate, err)

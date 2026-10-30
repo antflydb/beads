@@ -181,7 +181,7 @@ func (st *state) ready(f types.WorkFilter) ([]*types.IssueWithCounts, error) {
 	}
 	out := rows[:0]
 	for _, r := range rows {
-		if (!f.IncludeEphemeral && storageops.IsWisp(r.Issue)) || r.Pinned || r.IsBlocked || slices.Contains(f.ExcludeIDs, r.ID) {
+		if (!f.IncludeEphemeral && storageops.IsWisp(r.Issue)) || r.Pinned || r.IsBlocked || slices.Contains(r.Labels, "gt:slot") || slices.Contains(f.ExcludeIDs, r.ID) {
 			continue
 		}
 		if !f.IncludeDeferred && st.deferred(r.ID, time.Now()) {

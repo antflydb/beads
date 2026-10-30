@@ -536,3 +536,8 @@ fork payloads and branch merges, and survive typed housekeeping. Branch creation
 or conversion of work into runtime slot/wisp records is refused. Native and
 remote tests cover racing holders, waiters, independent-handle recovery, merge
 preservation and retention protection, alongside the full backend suite.
+
+Merge-slot records (`gt:slot`) are main-workspace coordination state: they are
+excluded from forks, preserved across merges and retention, and never returned
+as claimable ready work. Slot holder changes and persistent waiter queues use
+conditional workspace publication; unknown outcomes require reconciliation.
