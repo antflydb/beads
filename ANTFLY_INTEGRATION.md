@@ -590,3 +590,18 @@ The engine gates passed 650 Lite storage cases (five opt-in benchmark skips),
 169 Beads backend cases across embedded and remote transports without skips.
 These gates validate the fixes; the previous 30-minute factory soak failed on
 storage deadlines, so a healthy stock-factory acceptance result remains pending.
+
+
+### Dependency annotation compatibility
+
+Legacy dependency writes, create-with-dependencies and atomic batch additions
+share annotation handling. JSON metadata and thread IDs round-trip through
+embedded and remote storage. Empty requested thread IDs preserve existing
+threads. Canonically equivalent metadata re-additions do not publish a new
+head, change source revisions or report a batch change. Real annotation changes
+mint a source revision so stale issue writers fail their version check. Invalid
+JSON and nil legacy requests fail without publication.
+
+The full backend target passed 173 cases with zero skips or failures with the
+native library and a remote server configured. Advanced blocking dependency
+kinds remain unsupported; this closes the annotation gap only.

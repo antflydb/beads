@@ -122,12 +122,11 @@ func (b *batchApplier) ApplyBatch(ctx context.Context, request issueops.ApplyBat
 					}
 					// All graph changes are additions: checking every edge also proves the
 					// final graph acyclic even when the caller requests the bulk fast path.
-					if e := st.addEdge(from, to, d.Type, plan.Actor); e != nil {
-						return e
+					var annotationErr error
+					result.Changed, annotationErr = st.addAnnotatedEdge(from, to, d.Type, metadata, d.ThreadID, plan.Actor)
+					if annotationErr != nil {
+						return annotationErr
 					}
-					edge := st.Edges[edgeKey(from, to)]
-					edge.Metadata, edge.ThreadID = metadata, d.ThreadID
-					result.Changed = previous == nil
 					st.reblock()
 					return nil
 				})

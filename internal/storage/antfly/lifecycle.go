@@ -71,10 +71,7 @@ func (l *lifecycle) Create(ctx context.Context, req issueops.CreateRequest) (out
 			if d.Reverse {
 				from, to = to, from
 			}
-			if d.Metadata != "" || d.ThreadID != "" {
-				return errUnsupported("Lifecycle.Create: dependency metadata")
-			}
-			if e = st.addEdge(from, to, d.Type, req.Actor); e != nil {
+			if _, e = st.addAnnotatedEdge(from, to, d.Type, d.Metadata, d.ThreadID, req.Actor); e != nil {
 				return e
 			}
 		}

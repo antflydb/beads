@@ -78,6 +78,47 @@ func (st *state) addEdge(from, to string, kind types.DependencyType, actor strin
 	return nil
 }
 
+// addAnnotatedEdge shares legacy, create and batch annotation semantics. An
+// empty requested thread preserves the existing thread; omitted metadata uses
+// the canonical empty JSON object. Only a real change mints a source revision.
+func (st *state) addAnnotatedEdge(from, to string, kind types.DependencyType, metadata, thread, actor string) (bool, error) {
+	if actor == "" {
+		return false, storage.ErrValidation
+	}
+	if metadata == "" {
+		metadata = "{}"
+	}
+	if !json.Valid([]byte(metadata)) {
+		return false, fmt.Errorf("%w: invalid dependency metadata JSON", storage.ErrValidation)
+	}
+	old := st.Edges[edgeKey(from, to)]
+	if old != nil && old.Type != kind {
+		return false, &issueops.DependencyTypeConflictError{IssueID: from, DependsOnID: to, ExistingType: string(old.Type), RequestedType: string(kind)}
+	}
+	if err := st.addEdge(from, to, kind, actor); err != nil {
+		return false, err
+	}
+	edge := st.Edges[edgeKey(from, to)]
+	if old != nil {
+		oldMetadata := old.Metadata
+		if oldMetadata == "" {
+			oldMetadata = "{}"
+		}
+		if storageops.DependencyMetadataEqual(oldMetadata, metadata) && (thread == "" || thread == old.ThreadID) {
+			return false, nil
+		}
+	}
+	edge.Metadata = metadata
+	if thread != "" {
+		edge.ThreadID = thread
+	}
+	st.touch(&st.Issues[from].Issue)
+	if old != nil {
+		st.audit("dependency_updated", from, actor)
+	}
+	return true, nil
+}
+
 func (st *state) reblock() {
 	for _, r := range st.Issues {
 		r.Issue.IsBlocked = false
@@ -142,7 +183,7 @@ func (g *graph) AddDependencies(ctx context.Context, req issueops.AddDependencie
 	edges := append([]issueops.DependencyEdge(nil), req.Edges...)
 	err := g.s.mutate(ctx, func(st *state) error {
 		for _, d := range edges {
-			if e := st.addEdge(d.IssueID, d.DependsOnID, d.Type, req.Actor); e != nil {
+			if _, e := st.addAnnotatedEdge(d.IssueID, d.DependsOnID, d.Type, "", "", req.Actor); e != nil {
 				return e
 			}
 		}
@@ -206,8 +247,21 @@ func (g *graph) Related(ctx context.Context, req issueops.RelatedRequest) ([]*is
 	return out, nil
 }
 func (s *Store) AddDependency(ctx context.Context, d *types.Dependency, actor string) error {
-	_, e := (&graph{s}).AddDependencies(ctx, issueops.AddDependenciesRequest{Actor: actor, Edges: []issueops.DependencyEdge{{IssueID: d.IssueID, DependsOnID: d.DependsOnID, Type: d.Type}}})
-	return e
+	if d == nil {
+		return storage.ErrValidation
+	}
+	snapshot := *d
+	req := issueops.AddDependenciesRequest{Actor: actor, Edges: []issueops.DependencyEdge{{IssueID: snapshot.IssueID, DependsOnID: snapshot.DependsOnID, Type: snapshot.Type}}}
+	if err := storageops.ValidateAddDependenciesRequest(req); err != nil {
+		return err
+	}
+	return s.mutate(ctx, func(st *state) error {
+		if _, err := st.addAnnotatedEdge(snapshot.IssueID, snapshot.DependsOnID, snapshot.Type, snapshot.Metadata, snapshot.ThreadID, actor); err != nil {
+			return err
+		}
+		st.reblock()
+		return nil
+	})
 }
 func (s *Store) RemoveDependency(ctx context.Context, id, target, actor string) error {
 	_, e := (&graph{s}).RemoveDependency(ctx, issueops.RemoveDependencyRequest{Actor: actor, IssueID: id, DependsOnID: target})

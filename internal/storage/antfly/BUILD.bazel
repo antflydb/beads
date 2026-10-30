@@ -81,6 +81,7 @@ go_test(
         "core_gc_test.go",
         "core_query_test.go",
         "credentials_test.go",
+        "dependency_metadata_test.go",
         "querier_test.go",
         "sweep_test.go",
         "embedded_cgo_test.go",
