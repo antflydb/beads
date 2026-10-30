@@ -23,6 +23,9 @@ typedef struct {
     antfly_error_code (*open_table)(antfly_db*, antfly_slice, antfly_db**);
     antfly_error_code (*list_tables)(antfly_db*,antfly_buffer*);
     antfly_error_code (*add_index)(antfly_db*,antfly_slice);
+    antfly_error_code (*schema)(antfly_db*,antfly_buffer*);
+    antfly_error_code (*indexes)(antfly_db*,antfly_buffer*);
+    antfly_error_code (*delete_index)(antfly_db*,antfly_slice,bool*);
     antfly_error_code (*timestamp)(antfly_db*, antfly_slice, uint64_t*);
     antfly_error_code (*lookup)(antfly_db*, antfly_slice, antfly_buffer*);
     antfly_error_code (*batch)(antfly_db*, const antfly_write_intent*,size_t,const antfly_version_predicate*,size_t,uint64_t,uint8_t);
@@ -56,6 +59,9 @@ static int beads_load(beads_antfly *a,const char *path) {
     LOAD(open_table,"antfly_db_open_table");
     LOAD(list_tables,"antfly_db_list_tables_json");
     LOAD(add_index,"antfly_db_add_index_json");
+    LOAD(schema,"antfly_db_get_schema_json");
+    LOAD(indexes,"antfly_db_list_indexes_json");
+    LOAD(delete_index,"antfly_db_delete_index");
     LOAD(timestamp,"antfly_db_get_timestamp");
     LOAD(lookup,"antfly_db_lookup_json");
     LOAD(batch,"antfly_db_batch");
@@ -97,7 +103,7 @@ static antfly_error_code beads_put(beads_antfly*a,const antfly_write_intent*writ
 static antfly_error_code beads_add_graph(beads_antfly*a){const char*cfg="{\"name\":\"beads\",\"type\":\"graph\"}";antfly_slice config={(const uint8_t*)cfg,strlen(cfg)};return a->add_index(a->table,config);}
 static antfly_error_code beads_memory(beads_antfly*a,antfly_slice space,antfly_slice body,antfly_buffer*out){return a->memory(a->root,space,body,out);}
 static antfly_error_code beads_native(beads_antfly*a,int op,antfly_slice name,antfly_slice body,antfly_buffer*out){
- switch(op){case 0:return a->add_index(a->table,body);case 1:return a->enrichment(a->table,body);case 2:return a->search(a->table,body,out);case 3:return a->resolve(a->table,name,body,out);case 4:return a->render(a->table,name,body,out);case 5:return a->reviews(a->table,body,out);case 6:return a->curation(a->table,name,out);case 7:return a->merge(a->table,name,body);case 8:return a->suppress(a->table,name,body,out);case 9:return a->scan(a->table,body,out);default:return ANTFLY_INVALID_ARGUMENT;}
+ switch(op){case 0:return a->add_index(a->table,body);case 1:return a->enrichment(a->table,body);case 2:return a->search(a->table,body,out);case 3:return a->resolve(a->table,name,body,out);case 4:return a->render(a->table,name,body,out);case 5:return a->reviews(a->table,body,out);case 6:return a->curation(a->table,name,out);case 7:return a->merge(a->table,name,body);case 8:return a->suppress(a->table,name,body,out);case 9:return a->scan(a->table,body,out);case 10:return a->schema(a->table,out);case 11:return a->indexes(a->table,out);case 12:{bool deleted=false;return a->delete_index(a->table,name,&deleted);}default:return ANTFLY_INVALID_ARGUMENT;}
 }
 static antfly_error_code beads_database_backup(beads_antfly*a,antfly_buffer*out){return a->backup(a->root,out);}
 static antfly_error_code beads_restore_file(beads_antfly*a,const char*path,const char*backup,antfly_buffer*out){antfly_open_options opts;antfly_error_code code=a->options_init(&opts);if(code!=ANTFLY_OK)return code;opts.storage_kind=ANTFLY_STORAGE_KIND_LITE;return a->restore_file(path,&opts,backup,false,out);}
@@ -159,6 +165,10 @@ func retryEmbeddedRead(ctx context.Context, operation func() error) error {
 }
 
 func openEmbedded(t Target) (Transport, error) {
+	return openEmbeddedProfile(t, coreTableProfile)
+}
+
+func openEmbeddedProfile(t Target, profile tableProfile) (Transport, error) {
 	library := t.Library
 	if library == "" {
 		library = os.Getenv("ANTFLY_LIBRARY_PATH")
@@ -210,7 +220,7 @@ func openEmbedded(t Target) (Transport, error) {
 	var code C.antfly_error_code
 	createdTable := !slices.Contains(names, t.Table)
 	if createdTable {
-		schema, releaseSchema := nativeSlice([]byte(privateSnapshotTableSchema))
+		schema, releaseSchema := nativeSlice(tableSchema(profile))
 		code = C.beads_create_table(n, name, schema)
 		releaseSchema()
 		if code != C.ANTFLY_OK {
@@ -222,13 +232,18 @@ func openEmbedded(t Target) (Transport, error) {
 		C.beads_close(n)
 		return nil, fmt.Errorf("open embedded Antfly table: %w", err)
 	}
-	if createdTable {
+	if createdTable && profile == coreTableProfile {
 		if code = C.beads_add_graph(n); code != C.ANTFLY_OK {
 			C.beads_close(n)
 			return nil, nativeError(code)
 		}
 	}
-	return &embedded{native: n, key: t.Workspace}, nil
+	tr := &embedded{native: n, key: t.Workspace}
+	if err := applyTableProfile(context.Background(), tr, profile); err != nil {
+		_ = tr.Close()
+		return nil, err
+	}
+	return tr, nil
 }
 
 func nativeSlice(b []byte) (C.antfly_slice, func()) {
@@ -387,7 +402,7 @@ func (e *embedded) Close() error {
 }
 
 func (e *embedded) Native(ctx context.Context, op, name string, body json.RawMessage) (json.RawMessage, error) {
-	ops := map[string]int{"index": 0, "enrichment": 1, "query": 2, "resolve": 3, "render": 4, "reviews": 5, "review": 5, "curation": 6, "merge": 7, "suppress": 8, "scan": 9}
+	ops := map[string]int{"index": 0, "enrichment": 1, "query": 2, "resolve": 3, "render": 4, "reviews": 5, "review": 5, "curation": 6, "merge": 7, "suppress": 8, "scan": 9, "schema": 10, "indexes": 11, "delete-index": 12}
 	code, ok := ops[op]
 	if !ok {
 		return nil, errUnsupported("native." + op)

@@ -7,7 +7,9 @@ import (
 	"errors"
 )
 
-func openEmbedded(Target) (Transport, error) {
+func openEmbedded(t Target) (Transport, error) { return openEmbeddedProfile(t, coreTableProfile) }
+
+func openEmbeddedProfile(Target, tableProfile) (Transport, error) {
 	return nil, errors.New("embedded Antfly requires a cgo build on macOS or Linux; use a remote Antfly URL with this build")
 }
 

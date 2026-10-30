@@ -93,6 +93,10 @@ func (t TokenCredential) AntflyBearerToken() string { return string(t) }
 
 func OpenTransport(t Target) (Transport, error) { return OpenTransportWith(t, backends.OpenOptions{}) }
 func OpenTransportWith(t Target, opts backends.OpenOptions) (Transport, error) {
+	return openTransportProfileWith(t, opts, coreTableProfile)
+}
+
+func openTransportProfileWith(t Target, opts backends.OpenOptions, profile tableProfile) (Transport, error) {
 	if err := t.Validate(); err != nil {
 		return nil, err
 	}
@@ -106,7 +110,7 @@ func OpenTransportWith(t Target, opts backends.OpenOptions) (Transport, error) {
 		if opts.UserAgent != "" {
 			return nil, backends.ErrUserAgentWithoutOpenWith
 		}
-		raw, err := openEmbedded(t)
+		raw, err := openEmbeddedProfile(t, profile)
 		if err != nil {
 			return nil, err
 		}

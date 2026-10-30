@@ -45,6 +45,10 @@ func (r *remote) Native(ctx context.Context, op, name string, body json.RawMessa
 		delete(cfg, "name")
 		body, _ = json.Marshal(cfg)
 		path = base + "/indexes/" + url.PathEscape(name)
+	case "schema", "indexes":
+		method, path, body = http.MethodGet, base, nil
+	case "delete-index":
+		method, path, body = http.MethodDelete, base+"/indexes/"+url.PathEscape(name), nil
 	case "enrichment":
 		method = http.MethodPut
 		path = base + "/artifacts/" + url.PathEscape(name) + "/enrichment"
@@ -74,6 +78,16 @@ func (r *remote) Native(ctx context.Context, op, name string, body json.RawMessa
 		return nil, errUnsupported("native." + op)
 	}
 	out, _, _, err := r.call(ctx, method, path, body)
+	if err == nil && (op == "schema" || op == "indexes") {
+		var table map[string]json.RawMessage
+		if err = json.Unmarshal(out, &table); err != nil {
+			return nil, err
+		}
+		out = table[op]
+		if len(out) == 0 || string(out) == "null" {
+			out = json.RawMessage(`{}`)
+		}
+	}
 	return out, err
 }
 func resolverReview(name string) (string, string, error) {
@@ -85,7 +99,10 @@ func resolverReview(name string) (string, string, error) {
 	return "", "", fmt.Errorf("review name must be resolver/review-id")
 }
 func ensureTableWith(ctx context.Context, t Target, opts backends.OpenOptions) (Transport, error) {
-	tr, err := OpenTransportWith(t, opts)
+	return ensureTableProfileWith(ctx, t, opts, coreTableProfile)
+}
+func ensureTableProfileWith(ctx context.Context, t Target, opts backends.OpenOptions, profile tableProfile) (Transport, error) {
+	tr, err := openTransportProfileWith(t, opts, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -93,11 +110,17 @@ func ensureTableWith(ctx context.Context, t Target, opts backends.OpenOptions) (
 		path := "/db/v1/tables/" + url.PathEscape(t.Table)
 		_, _, status, e := r.call(ctx, http.MethodGet, path, nil)
 		if status == http.StatusNotFound {
-			_, _, _, e = r.call(ctx, http.MethodPost, path, map[string]any{"num_shards": 1, "schema": json.RawMessage(privateSnapshotTableSchema), "storage": map[string]any{"engine": "local", "dense_embeddings": "primary_lsm"}})
+			_, _, _, e = r.call(ctx, http.MethodPost, path, map[string]any{"num_shards": 1, "schema": tableSchema(profile), "storage": map[string]any{"engine": "local", "dense_embeddings": "primary_lsm"}})
 		}
 		if e != nil {
 			_ = tr.Close()
 			return nil, e
+		}
+	}
+	if _, ok := underlyingTransport(tr).(*remote); ok {
+		if err = applyTableProfile(ctx, tr, profile); err != nil {
+			_ = tr.Close()
+			return nil, err
 		}
 	}
 	return tr, nil

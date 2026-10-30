@@ -16,9 +16,11 @@ var ErrSnapshotConflict = errConflict
 // OpenSnapshot opens a dedicated generic JSON snapshot workspace. Top-level
 // object fields are split into immutable per-key records and published with
 // one conditional head, without Beads issue projections or lifecycle policy.
-// Callers must use their own schema and a workspace separate from Beads work.
+// New tables have a snapshot-only profile without default domain indexes.
+// Callers must use a dedicated table for new coordination deployments; existing
+// untagged tables retain their legacy schema and indexes.
 func OpenSnapshot(ctx context.Context, target Target, opts backends.OpenOptions) (Transport, error) {
-	tr, err := ensureTableWith(ctx, target, opts)
+	tr, err := ensureTableProfileWith(ctx, target, opts, snapshotTableProfile)
 	if err != nil {
 		return nil, err
 	}

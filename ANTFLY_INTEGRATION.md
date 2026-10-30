@@ -662,3 +662,26 @@ On a checkpoint copy, the explicit schema/rebuild/backfill sequence preserved
 public title search, excluded private text, and eliminated busy responses in
 eight alternating-process rounds. This does not establish a healthy factory
 soak or complete migration of existing tables.
+
+
+### Coordination table profile
+
+New generic snapshot tables declare the `beads_snapshot` default document type
+and omit the SDK's default issue full-text and Beads graph indexes. Coordination
+operations use immutable exact records and their typed sparse indexes. Core
+work tables retain searchable issue projections, graph indexes and native
+memory capabilities. Managed core initialization rejects a snapshot-only table
+before publishing work data. Use separate tables for work and coordination.
+
+The profile is declared atomically at table creation. A later open completes
+removal of SDK default indexes left by an interrupted provisioner. Unrelated
+custom indexes remain intact. Existing untagged tables keep their schemas and
+indexes; migration uses a logical snapshot backup, restore into a fresh
+snapshot-profile table and an explicit binding switch while the owning factory
+is stopped. Keep the original file and archive for review.
+
+The full native/remote backend gate passed 181 cases without skips or failures,
+including snapshot data and fence round-trips, idempotent profile reopen,
+rejected core attachment without publication, legacy index preservation and
+large generic snapshots. This is component evidence; the earlier fresh embedded
+runtime still hit deadlines and has not established a healthy factory soak.
