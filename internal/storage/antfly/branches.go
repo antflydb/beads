@@ -369,6 +369,7 @@ func (s *Store) MergeFork(ctx context.Context, name, key, actor string, dryRun b
 		main.Edges = candidate.Edges
 		main.Notes = candidate.Notes
 		main.Config = candidate.Config
+		main.Retired = candidate.Retired
 		for id, record := range main.Issues {
 			if old, ok := previousIssues[id]; !ok || !sameDomainIssue(&old.Issue, &record.Issue) {
 				main.touch(&record.Issue)
@@ -446,6 +447,13 @@ func mergeStates(base, main, fork *state, actor string) (*state, []string, error
 		return nil, nil, err
 	}
 	out.initialize()
+	// Retained-ID tombstones are monotonic across integrations. A fork must
+	// neither lose its retirement history nor resurrect a retired main ID.
+	for id, at := range fork.Retired {
+		if previous, ok := out.Retired[id]; !ok || at.After(previous) {
+			out.Retired[id] = at
+		}
+	}
 	conflicts := []string{}
 	ids := map[string]bool{}
 	for id := range base.Issues {
@@ -539,6 +547,11 @@ func mergeStates(base, main, fork *state, actor string) (*state, []string, error
 		}
 		issue.RowVersion = version
 		out.Issues[id] = &record{Issue: issue, Version: version}
+	}
+	for id := range out.Retired {
+		if out.Issues[id] != nil {
+			conflicts = append(conflicts, "issues/"+id+"/retired_id")
+		}
 	}
 	mergeMap := func(kind string, a, b, c any, destination any) error {
 		ar, _ := json.Marshal(a)

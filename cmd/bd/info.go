@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/beads/cmd/bd/doctor"
 	"github.com/steveyegge/beads/internal/metrics"
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/types"
 	"github.com/steveyegge/beads/internal/workapi"
 )
@@ -70,7 +71,7 @@ Examples:
 
 		if store != nil {
 			ctx := rootCtx
-			if scoped, ok := store.(interface {
+			if scoped, ok := storage.UnwrapStore(store).(interface {
 				ArchiveScope(context.Context) (string, error)
 			}); ok {
 				scope, err := scoped.ArchiveScope(ctx)

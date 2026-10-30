@@ -414,3 +414,28 @@ func TestNativeExportRelationsCountOnlyBlockingEdgesAndPreservePlanes(t *testing
 		t.Fatalf("branch scope collision: %s %s %v", first, second, err)
 	}
 }
+
+func TestIntegrationPreservesRetiredIDsAndRefusesResurrection(t *testing.T) {
+	s, _ := testStore(t)
+	createTestIssue(t, s, "bd-retired-merge")
+	ctx := context.Background()
+	base, _, err := s.load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main, fork := cloneState(t, base), cloneState(t, base)
+	delete(fork.Issues, "bd-retired-merge")
+	at := time.Now().UTC()
+	fork.Retired["bd-retired-merge"] = at
+	merged, conflicts, err := mergeStates(base, main, fork, "test")
+	if err != nil || len(conflicts) != 0 || !merged.Retired["bd-retired-merge"].Equal(at) || merged.Issues["bd-retired-merge"] != nil {
+		t.Fatalf("retirement lost: state=%+v conflicts=%v err=%v", merged, conflicts, err)
+	}
+	main = cloneState(t, merged)
+	fork = cloneState(t, merged)
+	fork.Issues["bd-retired-merge"] = base.Issues["bd-retired-merge"]
+	_, conflicts, err = mergeStates(merged, main, fork, "test")
+	if err != nil || len(conflicts) == 0 {
+		t.Fatalf("retired ID resurrected: conflicts=%v err=%v", conflicts, err)
+	}
+}
