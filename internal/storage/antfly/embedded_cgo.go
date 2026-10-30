@@ -123,9 +123,10 @@ import (
 )
 
 type embedded struct {
-	mu     sync.Mutex
-	native *C.beads_antfly
-	key    string
+	mu      sync.RWMutex // lifecycle: Close waits for all admitted native calls
+	writeMu sync.Mutex   // retain mutation ordering and timestamp assignment
+	native  *C.beads_antfly
+	key     string
 }
 
 // Busy is a pre-admission failure for opens and reads. Retry those operations
@@ -254,8 +255,8 @@ func (e *embedded) Load(ctx context.Context) ([]byte, uint64, error) {
 	return e.ReadDocument(ctx, e.key)
 }
 func (e *embedded) ReadDocument(ctx context.Context, name string) ([]byte, uint64, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if err := ctx.Err(); err != nil {
@@ -301,8 +302,10 @@ func (e *embedded) WriteDocuments(ctx context.Context, version *uint64, docs map
 	return e.writeDocuments(ctx, e.key, version, docs)
 }
 func (e *embedded) writeDocuments(ctx context.Context, fence string, version *uint64, docs map[string]json.RawMessage) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if err := ctx.Err(); err != nil {
@@ -340,8 +343,10 @@ func (e *embedded) writeDocuments(ctx context.Context, fence string, version *ui
 	return nil
 }
 func (e *embedded) Memory(ctx context.Context, space, action, key string, body json.RawMessage) (json.RawMessage, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if err := ctx.Err(); err != nil {
@@ -418,8 +423,10 @@ func (e *embedded) Native(ctx context.Context, op, name string, body json.RawMes
 		cfg["operation"] = op
 		body, _ = json.Marshal(cfg)
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if err := ctx.Err(); err != nil {
@@ -480,8 +487,10 @@ func (e *embedded) WriteDatabaseBackup(ctx context.Context, writer io.Writer) er
 	if writer == nil {
 		return fmt.Errorf("nil database backup writer")
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	e.writeMu.Lock()
+	defer e.writeMu.Unlock()
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if err := ctx.Err(); err != nil {

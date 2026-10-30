@@ -6,12 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/steveyegge/beads/backend"
 	"github.com/steveyegge/beads/backend/conformance"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -522,5 +525,99 @@ func TestEmbeddedReadRetriesOnlyBusy(t *testing.T) {
 	err = retryEmbeddedRead(ctx, func() error { return errEmbeddedBusy })
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline: %v", err)
+	}
+}
+
+func TestNativeSnapshotConcurrentReadsPublicationAndClose(t *testing.T) {
+	library := os.Getenv("ANTFLY_TEST_LIBRARY")
+	if library == "" {
+		t.Skip("ANTFLY_TEST_LIBRARY required")
+	}
+	ctx := context.Background()
+	tr, err := OpenSnapshot(ctx, Target{Library: library, Path: filepath.Join(t.TempDir(), "concurrent.aflite"), Table: "infra", Workspace: "main"}, backends.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	snapshot := func(n int) []byte {
+		data, e := json.Marshal(map[string]any{"counter": n, "records": map[string]any{"sentinel": map[string]int{"value": n}}})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return data
+	}
+	if err = tr.CompareAndSwap(ctx, 0, snapshot(0)); err != nil {
+		t.Fatal(err)
+	}
+	var closeRequested atomic.Bool
+	var reads atomic.Int64
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	failures := make(chan error, 6)
+	for range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				raw, _, e := tr.Load(ctx)
+				if e != nil {
+					if !closeRequested.Load() {
+						failures <- e
+					}
+					return
+				}
+				var view struct {
+					Counter int `json:"counter"`
+					Records map[string]struct {
+						Value int `json:"value"`
+					} `json:"records"`
+				}
+				if e = json.Unmarshal(raw, &view); e != nil {
+					failures <- e
+					return
+				}
+				if view.Counter != view.Records["sentinel"].Value {
+					failures <- fmt.Errorf("torn committed snapshot: %s", raw)
+					return
+				}
+				reads.Add(1)
+			}
+		}()
+	}
+	for n := 1; n <= 16; n++ {
+		_, version, e := tr.Load(ctx)
+		if e != nil {
+			err = e
+			break
+		}
+		if e = tr.CompareAndSwap(ctx, version, snapshot(n)); e != nil {
+			err = e
+			break
+		}
+	}
+	closeRequested.Store(true)
+	closeErr := tr.Close()
+	close(stop)
+	wg.Wait()
+	close(failures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	for e := range failures {
+		t.Errorf("concurrent reader: %v", e)
+	}
+	if reads.Load() == 0 {
+		t.Fatal("readers made no progress")
+	}
+	if _, _, e := tr.Load(ctx); e == nil {
+		t.Fatal("closed native transport remained readable")
 	}
 }

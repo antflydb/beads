@@ -547,3 +547,10 @@ removes each selected row and incident edges inside the staged transaction,
 recomputes blockers, and publishes the whole burn once; a missing later row
 rolls the entire operation back. Selection and live-holder guards remain in
 the molecule command above this primitive.
+
+Embedded transport admission honors the ABI 3 serialized-threading contract:
+point reads hold a shared library/handle lifetime guard and can run while a
+write is admitted. Mutating calls retain one ordered write gate, including
+timestamp assignment; close waits for all native calls before releasing handles
+and unloading the library. Fence-before-document reads retain conservative
+conflict behavior if a publication interleaves between the two native calls.
