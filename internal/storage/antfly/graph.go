@@ -71,7 +71,7 @@ func (st *state) addEdge(from, to string, kind types.DependencyType, actor strin
 		}
 		if reaches(to) {
 			delete(st.Edges, key)
-			return fmt.Errorf("%w: dependency cycle", storage.ErrValidation)
+			return fmt.Errorf("%w: %w", storage.ErrValidation, issueops.ErrDependencyCycle)
 		}
 	}
 	st.audit("dependency_added", from, actor)

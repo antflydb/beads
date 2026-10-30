@@ -470,3 +470,22 @@ cross-store readiness.
 The full backend suite passes against embedded and remote Antfly with these
 corrections. A live two-rig bundled workflow exposed the claim lookup gap;
 completion and crash/redelivery qualification remain in progress.
+
+
+## Atomic native batch operations
+
+The native `BatchApplier` stages create, update, close and dependency additions
+against one private snapshot, then publishes once through the revision fence.
+Request planning and lifecycle guards are shared with single-item operations;
+forward metadata references resolve after all creates. A later item refusal
+rolls back the whole request. Type conflicts, cycles and hierarchy conflicts
+are refused, including hierarchy introduced after a blocking edge. The bulk
+cycle hint never disables graph validation. Commit conflicts and indeterminate
+outcomes return without replay or provisional results.
+
+Embedded and remote contract tests cover metadata references, stale-guard
+rollback, final hierarchy and cycle refusals, and guarded metadata-plus-close.
+The transport fixture additionally proves one publication per successful batch
+and no replay of an indeterminate commit. Advanced blocking dependency types
+remain explicitly unsupported. This supplies the atomic work-graph capability
+used by legacy formula adapters; full live factory qualification is separate.

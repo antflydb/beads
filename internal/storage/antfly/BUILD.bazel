@@ -4,6 +4,7 @@ go_library(
     name = "antfly",
     srcs = [
         "antfly.h",
+        "batch_apply.go",
         "branches.go",
         "context.go",
         "core_gc.go",
@@ -72,6 +73,7 @@ go_library(
 go_test(
     name = "antfly_test",
     srcs = [
+        "batch_apply_test.go",
         "core_gc_test.go",
         "credentials_test.go",
         "querier_test.go",

@@ -47,11 +47,6 @@ func (unsupportedDoltStorage) AsOf(_ context.Context, _ string, _ string) (_ *ty
 	return
 }
 
-func (unsupportedDoltStorage) BatchApplier() (_ issueops.BatchApplier, err error) {
-	err = errUnsupported("BatchApplier")
-	return
-}
-
 func (unsupportedDoltStorage) BatchCreator() (_ issueops.BatchCreator, err error) {
 	err = errUnsupported("BatchCreator")
 	return
@@ -537,4 +532,4 @@ func (unsupportedDoltStorage) UpdateIssueType(_ context.Context, _ string, _ str
 	return
 }
 
-// NOTE: partial shell (104 of 205 methods generated; 101 left to this package's hand-written set).
+// NOTE: partial shell (103 of 205 methods generated; 102 left to this package's hand-written set).
