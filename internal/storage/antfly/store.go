@@ -28,6 +28,10 @@ var errIndeterminate = storage.ErrCommitIndeterminate
 // State is a transaction-local domain view. Separate immutable rows are
 // published with one workspace OCC fence by the transport.
 type state struct {
+	// Read-only indexed views retain ancestor records for inherited deferral,
+	// but expose only the candidate issues to search/ready. Never persisted.
+	queryCandidates map[string]bool
+
 	Branches           map[string]Branch            `json:"branches"`
 	Integrations       map[string]Integration       `json:"integrations"`
 	Knowledge          *KnowledgeState              `json:"knowledge,omitempty"`

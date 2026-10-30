@@ -40,6 +40,9 @@ func (st *state) search(query string, f types.IssueFilter) ([]*types.IssueWithCo
 	}
 	out := []*types.IssueWithCounts{}
 	for id, r := range st.Issues {
+		if st.queryCandidates != nil && !st.queryCandidates[id] {
+			continue
+		}
 		i := &r.Issue
 		if f.Status != nil && i.Status != *f.Status || len(f.Statuses) > 0 && !slices.Contains(f.Statuses, i.Status) || slices.Contains(f.ExcludeStatus, i.Status) {
 			continue
@@ -165,16 +168,7 @@ func (st *state) ready(f types.WorkFilter) ([]*types.IssueWithCounts, error) {
 	if e := rejectFields(f, "Status Statuses Type Priority Assignee Unassigned Labels LabelsAny ExcludeLabels Limit SortPolicy IncludeDeferred IncludeEphemeral ExcludeTypes ExcludeIDs MetadataFields HasMetadataKey Offset MaxRows MaxRowsSource"); e != nil {
 		return nil, e
 	}
-	status := f.Status
-	if status == "" {
-		status = types.StatusOpen
-	}
-	it := types.IssueType(f.Type)
-	filter := types.IssueFilter{Status: &status, Statuses: f.Statuses, Priority: f.Priority, Assignee: f.Assignee, NoAssignee: f.Unassigned, Labels: f.Labels, LabelsAny: f.LabelsAny, ExcludeLabels: f.ExcludeLabels, ExcludeTypes: f.ExcludeTypes, MetadataFields: f.MetadataFields, HasMetadataKey: f.HasMetadataKey}
-	if f.Type != "" {
-		filter.IssueType = &it
-		filter.ExcludeTypes = nil
-	}
+	filter := readyIssueFilter(f)
 	rows, e := st.search("", filter)
 	if e != nil {
 		return nil, e
@@ -227,7 +221,7 @@ func (r *reader) List(ctx context.Context, req issueops.ListRequest) (issueops.I
 	}
 	f.Limit = 0
 	f.Offset = 0
-	st, _, e := r.s.load(ctx)
+	st, e := r.s.queryState(ctx, f)
 	if e != nil {
 		return issueops.IssuePage{}, e
 	}
@@ -259,7 +253,7 @@ func (r *reader) Ready(ctx context.Context, req issueops.ReadyRequest) (issueops
 	}
 	limit := f.Limit
 	f.Limit = 0
-	st, _, e := r.s.load(ctx)
+	st, e := r.s.queryState(ctx, readyIssueFilter(f))
 	if e != nil {
 		return issueops.IssuePage{}, e
 	}
@@ -337,7 +331,7 @@ func (s *Store) SearchIssueIDs(ctx context.Context, q string, f types.IssueFilte
 }
 
 func (s *Store) SearchIssuesWithCounts(ctx context.Context, q string, f types.IssueFilter) ([]*types.IssueWithCounts, error) {
-	st, _, e := s.load(ctx)
+	st, e := s.queryState(ctx, f)
 	if e != nil {
 		return nil, e
 	}
@@ -352,14 +346,14 @@ func (s *Store) GetReadyWork(ctx context.Context, f types.WorkFilter) ([]*types.
 	return out, e
 }
 func (s *Store) GetReadyWorkWithCounts(ctx context.Context, f types.WorkFilter) ([]*types.IssueWithCounts, error) {
-	st, _, e := s.load(ctx)
+	st, e := s.queryState(ctx, readyIssueFilter(f))
 	if e != nil {
 		return nil, e
 	}
 	return st.ready(f)
 }
 func (s *Store) GetReadyWorkWithCountsAndTotal(ctx context.Context, f types.WorkFilter) ([]*types.IssueWithCounts, int, error) {
-	st, _, e := s.load(ctx)
+	st, e := s.queryState(ctx, readyIssueFilter(f))
 	if e != nil {
 		return nil, 0, e
 	}

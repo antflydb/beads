@@ -15,7 +15,8 @@ const coreIndexField = "_core_point_index"
 const coreIndexKind = "_core_lookup"
 
 type coreIssueLookup struct {
-	Rows []string `json:"rows"`
+	Rows    []string `json:"rows"`
+	Parents []string `json:"parents,omitempty"`
 }
 
 func addCorePointIndex(fields, rows map[string]json.RawMessage) error {
@@ -38,6 +39,12 @@ func addCorePointIndex(fields, rows map[string]json.RawMessage) error {
 				return err
 			}
 			id = edge.IssueID
+			if incoming := lookups[edge.DependsOnID]; incoming != nil && edge.DependsOnID != id {
+				incoming.Rows = append(incoming.Rows, key)
+				if edge.Type == types.DepParentChild && lookups[id] != nil {
+					lookups[id].Parents = append(lookups[id].Parents, edge.DependsOnID)
+				}
+			}
 		}
 		if lookup := lookups[id]; lookup != nil {
 			lookup.Rows = append(lookup.Rows, key)
@@ -46,6 +53,7 @@ func addCorePointIndex(fields, rows map[string]json.RawMessage) error {
 	fields[coreIndexField] = json.RawMessage(`1`)
 	for id, lookup := range lookups {
 		sort.Strings(lookup.Rows)
+		sort.Strings(lookup.Parents)
 		raw, err := json.Marshal(lookup)
 		if err != nil {
 			return err

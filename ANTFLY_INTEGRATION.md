@@ -554,3 +554,22 @@ write is admitted. Mutating calls retain one ordered write gate, including
 timestamp assignment; close waits for all native calls before releasing handles
 and unloading the library. Fence-before-document reads retain conservative
 conflict behavior if a publication interleaves between the two native calls.
+
+
+### Core list and ready indexes
+
+Core workspace publications now include sparse, sharded postings for issue IDs,
+status, type, assignee, priority, labels, and metadata equality. List and ready
+select candidate records from one captured head and retain the existing domain
+filters, sort, pagination, counts, lease fields, and dependency hydration. Incoming
+edges are included in each issue lookup so dependent counts remain exact. Ancestor
+records are retained for inherited deferral without leaking into query results. A head
+change during the join causes a bounded retry; corrupt referenced postings fail
+explicitly. Query reads never publish a migration. Older heads use their existing
+full snapshot path until an ordinary mutation publishes the derived indexes.
+
+A regression with one open issue among 1,000 formerly read 2,516 documents;
+the indexed path requires at most 24, including comments and incident edges.
+Unfiltered text queries still examine all live issues, and mutation callbacks
+still construct complete transaction snapshots. This does not make every storage
+operation proportional to the result size or qualify a production factory soak.
